@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Simple CRM — Client Orders</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand__mark" aria-hidden="true">◫</span>
+          <div>
+            <strong>Simple CRM</strong>
+            <span>Client orders</span>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Main">
+          <button type="button" class="nav__item is-active" data-view="dashboard">Dashboard</button>
+          <button type="button" class="nav__item" data-view="orders">Orders</button>
+          <button type="button" class="nav__item" data-view="clients">Clients</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1 id="page-title">Dashboard</h1>
+            <p id="page-subtitle">Overview of clients and open work</p>
+          </div>
+          <div class="topbar__actions" id="topbar-actions"></div>
+        </header>
+
+        <div id="toast" class="toast" hidden role="status"></div>
+
+        <section id="view-dashboard" class="view"></section>
+        <section id="view-orders" class="view" hidden></section>
+        <section id="view-clients" class="view" hidden></section>
+      </main>
+    </div>
+
+    <dialog id="modal" class="modal">
+      <form id="modal-form" method="dialog" class="modal__panel">
+        <header class="modal__header">
+          <h2 id="modal-title">Edit</h2>
+          <button type="button" class="icon-btn" id="modal-close" aria-label="Close">×</button>
+        </header>
+        <div id="modal-body" class="modal__body"></div>
+        <footer class="modal__footer">
+          <button type="button" class="btn btn--ghost" id="modal-cancel">Cancel</button>
+          <button type="submit" class="btn btn--primary" id="modal-save">Save</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+# Deploy on Render: https://dashboard.render.com → New → Blueprint → connect this repo.
+# Docs: https://render.com/docs/infrastructure-as-code
+
+services:
+  - type: web
+    name: crm-tool
+    runtime: node
+    plan: free
+    buildCommand: echo "No build step"
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: PORT
+        value: "10000"

@@ -1,0 +1,71 @@
+{
+  "clients": [
+    {
+      "id": "cli_001",
+      "name": "Acme Manufacturing",
+      "email": "orders@acme.example",
+      "phone": "+1 555-0100",
+      "address": "123 Industrial Blvd, Austin TX",
+      "notes": "Prefers rush quotes on Thursdays.",
+      "createdAt": "2026-04-01T10:00:00.000Z",
+      "updatedAt": "2026-04-01T10:00:00.000Z"
+    },
+    {
+      "id": "cli_002",
+      "name": "Bright Studio",
+      "email": "hello@brightstudio.example",
+      "phone": "+1 555-0188",
+      "address": "45 Design Lane, Portland OR",
+      "notes": "",
+      "createdAt": "2026-04-10T14:30:00.000Z",
+      "updatedAt": "2026-04-10T14:30:00.000Z"
+    }
+  ],
+  "orders": [
+    {
+      "id": "ord_001",
+      "orderId": "2026-0417-Acme",
+      "clientId": "cli_001",
+      "dateReceived": "2026-04-17",
+      "items": "Custom bracket set (x12), mounting plates (x4)",
+      "quantity": 16,
+      "totalCost": 1240,
+      "status": "In Progress",
+      "paymentStatus": "Partial",
+      "dueDate": "2026-05-10",
+      "notes": "Awaiting final STL revision from client.",
+      "createdAt": "2026-04-17T09:00:00.000Z",
+      "updatedAt": "2026-04-20T11:00:00.000Z"
+    },
+    {
+      "id": "ord_002",
+      "orderId": "2026-0422-Bright",
+      "clientId": "cli_002",
+      "dateReceived": "2026-04-22",
+      "items": "Prototype enclosures (x3)",
+      "quantity": 3,
+      "totalCost": 480,
+      "status": "New",
+      "paymentStatus": "Unpaid",
+      "dueDate": "2026-05-26",
+      "notes": "",
+      "createdAt": "2026-04-22T16:00:00.000Z",
+      "updatedAt": "2026-04-22T16:00:00.000Z"
+    },
+    {
+      "id": "ord_003",
+      "orderId": "2026-0310-Acme",
+      "clientId": "cli_001",
+      "dateReceived": "2026-03-10",
+      "items": "Calibration jigs (x2)",
+      "quantity": 2,
+      "totalCost": 320,
+      "status": "Delivered",
+      "paymentStatus": "Paid",
+      "dueDate": "2026-03-28",
+      "notes": "Shipped via UPS.",
+      "createdAt": "2026-03-10T08:00:00.000Z",
+      "updatedAt": "2026-03-29T10:00:00.000Z"
+    }
+  ]
+}
