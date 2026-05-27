@@ -38,9 +38,16 @@ function showLogin(message = "") {
   }
 }
 
-function showApp() {
+function showApp(loading = false) {
   $("#login-screen").hidden = true;
   $("#app-root").hidden = false;
+  if (loading) {
+    $("#view-dashboard").hidden = false;
+    $$(".view").forEach((el) => {
+      if (el.id !== "view-dashboard") el.hidden = true;
+    });
+    $("#view-dashboard").innerHTML = `<div class="app-loading">Loading your CRM…</div>`;
+  }
 }
 
 function updateChrome() {
@@ -518,15 +525,21 @@ function wireChrome() {
   $("#login-form").onsubmit = async (e) => {
     e.preventDefault();
     const password = $("#login-password").value;
+    const submitBtn = $("#login-form").querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Signing in…";
     try {
       await api("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) });
       $("#login-password").value = "";
-      showApp();
+      showApp(true);
       await loadAll();
       setView("dashboard");
       toast("Signed in");
     } catch (err) {
       showLogin(err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Sign in";
     }
   };
   $("#logout-btn").onclick = async () => {
@@ -545,7 +558,7 @@ async function init() {
       showLogin();
       return;
     }
-    showApp();
+    showApp(true);
     await loadAll();
     setView("dashboard");
   } catch (err) {
