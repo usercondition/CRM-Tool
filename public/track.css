@@ -134,6 +134,11 @@ body {
   color: #fcd34d;
 }
 
+.status--ready {
+  background: rgba(45, 212, 191, 0.15);
+  color: #5eead4;
+}
+
 .status--shipped {
   background: rgba(139, 92, 246, 0.15);
   color: #c4b5fd;

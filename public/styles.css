@@ -889,6 +889,12 @@ tr:hover td {
   border-color: rgba(251, 191, 36, 0.4);
 }
 
+.badge--ready {
+  background: rgba(45, 212, 191, 0.22);
+  color: #ccfbf1;
+  border-color: rgba(45, 212, 191, 0.4);
+}
+
 .badge--shipped {
   background: rgba(139, 92, 246, 0.22);
   color: #ede9fe;

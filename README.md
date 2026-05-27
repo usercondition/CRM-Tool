@@ -97,7 +97,9 @@ See `.env.example` for local development.
 
 ## Order workflow
 
-Status: `New` → `In Progress` → `Shipped` → `Delivered`
+Status: `New` → `In Progress` → `Ready` → `Shipped` → `Delivered`
+
+`Ready` means work is complete and the order is waiting for fulfillment. Use **Mark shipped** or **Mark picked up** from the order detail to finish local pickup orders without going through Shipped.
 
 Payment: `Unpaid`, `Partial`, `Paid`, `Refunded`
 

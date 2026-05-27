@@ -97,6 +97,7 @@ function statusBadge(status) {
   const map = {
     New: "badge--new",
     "In Progress": "badge--progress",
+    Ready: "badge--ready",
     Shipped: "badge--shipped",
     Delivered: "badge--delivered",
   };
@@ -339,7 +340,7 @@ function miniBarChart(data, valueKey = "value", maxBars = 30) {
 }
 
 function pipelineBars(pipelineCount, pipelineValue) {
-  const statuses = state.meta?.orderStatuses || ["New", "In Progress", "Shipped", "Delivered"];
+  const statuses = state.meta?.orderStatuses || ["New", "In Progress", "Ready", "Shipped", "Delivered"];
   const maxVal = Math.max(...statuses.map((s) => Number(pipelineValue[s]) || 0), 1);
   return statuses
     .map(
@@ -989,6 +990,15 @@ async function openOrderDetail(id) {
     }
   const flow = state.meta.orderStatuses;
   const next = flow[flow.indexOf(order.status) + 1];
+  const atReady = order.status === "Ready";
+  const advanceBtn =
+    next && !atReady
+      ? `<button type="button" class="btn btn--primary" id="detail-advance">Advance to ${escapeHtml(next)}</button>`
+      : "";
+  const readyActions = atReady
+      ? `<button type="button" class="btn btn--primary" id="detail-ship">Mark shipped</button>
+         <button type="button" class="btn" id="detail-pickup">Mark picked up</button>`
+      : "";
   const timeline =
     activity.length > 0
       ? activity
@@ -1019,7 +1029,8 @@ async function openOrderDetail(id) {
     ${order.items ? `<div class="detail-block"><span class="detail-label">Items</span><p>${escapeHtml(order.items)}</p></div>` : ""}
     ${order.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(order.notes)}</p></div>` : ""}
     <div class="detail-actions">
-      ${next ? `<button type="button" class="btn btn--primary" id="detail-advance">Advance to ${escapeHtml(next)}</button>` : ""}
+      ${advanceBtn}
+      ${readyActions}
       ${order.paymentStatus !== "Paid" ? `<button type="button" class="btn" id="detail-mark-paid">Mark paid</button>` : ""}
       <button type="button" class="btn" id="detail-share">Copy client link</button>
       <button type="button" class="btn btn--ghost" id="detail-rotate-link" title="Invalidate old links">New link</button>
@@ -1041,10 +1052,24 @@ async function openOrderDetail(id) {
   openModal(order.orderId, body, null, { wide: true, hideSave: true });
   $("#modal-cancel").textContent = "Close";
 
-  if (next) {
+  if (next && !atReady) {
     $("#detail-advance").onclick = async () => {
       await quickOrderPatch(id, { advanceStatus: true });
       toast(`Moved to ${next}`);
+      $("#modal").close();
+      openOrderDetail(id);
+    };
+  }
+  if (atReady) {
+    $("#detail-ship").onclick = async () => {
+      await quickOrderPatch(id, { status: "Shipped" });
+      toast("Marked as shipped");
+      $("#modal").close();
+      openOrderDetail(id);
+    };
+    $("#detail-pickup").onclick = async () => {
+      await quickOrderPatch(id, { status: "Delivered" });
+      toast("Marked as picked up");
       $("#modal").close();
       openOrderDetail(id);
     };

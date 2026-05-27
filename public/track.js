@@ -32,6 +32,7 @@ function statusClass(status) {
   const map = {
     New: "status--new",
     "In Progress": "status--progress",
+    Ready: "status--ready",
     Shipped: "status--shipped",
     Delivered: "status--delivered",
   };
