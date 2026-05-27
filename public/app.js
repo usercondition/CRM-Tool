@@ -952,9 +952,9 @@ async function openClientDetail(id) {
   });
 }
 
-function openModalForm(title, bodyHtml, onSave) {
+function openModalForm(title, bodyHtml, onSave, options = {}) {
   $("#modal-cancel").textContent = "Cancel";
-  openModal(title, bodyHtml, onSave);
+  openModal(title, bodyHtml, onSave, options);
 }
 
 function field(name, label, value = "", type = "text", options = {}) {
@@ -967,7 +967,7 @@ function field(name, label, value = "", type = "text", options = {}) {
       .join("");
     return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}">${opts}</select></div>`;
   }
-  return `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" value="${escapeHtml(value)}" ${options.required ? "required" : ""} /></div>`;
+  return `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" value="${escapeHtml(value)}"${options.required ? " required" : ""}${options.step !== undefined ? ` step="${escapeHtml(String(options.step))}"` : ""}${options.min !== undefined ? ` min="${escapeHtml(String(options.min))}"` : ""} /></div>`;
 }
 
 function openClientModal(id = null) {
@@ -1054,8 +1054,8 @@ function openOrderModal(id = null, presetClientId = null) {
     </div>
     ${field("items", "Items / description", existing?.items || "", "textarea")}
     <div class="field-row">
-      ${field("quantity", "Quantity", existing?.quantity ?? 1, "number")}
-      ${field("totalCost", "Total cost", existing?.totalCost ?? 0, "number")}
+      ${field("quantity", "Quantity", existing?.quantity ?? 1, "number", { step: "any", min: 0 })}
+      ${field("totalCost", "Total cost", existing?.totalCost ?? 0, "number", { step: "0.01", min: 0 })}
     </div>
     <div class="field-row">
       ${field("status", "Status", existing?.status || "New", "select", { choices: state.meta.orderStatuses })}
@@ -1073,7 +1073,7 @@ function openOrderModal(id = null, presetClientId = null) {
     ${field("notes", "Notes", existing?.notes || "", "textarea")}
   `;
 
-    openModalForm(existing ? "Edit order" : "New order", body, async (fd) => {
+  openModalForm(existing ? "Edit order" : "New order", body, async (fd) => {
       const payload = Object.fromEntries(fd.entries());
       payload.quantity = Number(payload.quantity);
       payload.totalCost = Number(payload.totalCost);
