@@ -5,7 +5,7 @@ const state = {
   clients: [],
   orders: [],
   dashboard: null,
-  orderFilter: { q: "", status: "", clientId: "" },
+  orderFilter: { q: "", status: "", clientId: "", attention: "" },
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -69,6 +69,24 @@ function formatDate(d) {
   if (!d) return "—";
   const dt = new Date(d + (d.length === 10 ? "T12:00:00" : ""));
   return dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function formatDateTime(iso) {
+  if (!iso) return "—";
+  const dt = new Date(iso);
+  return dt.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function paymentBadge(status) {
+  if (status === "Paid") return `<span class="badge badge--delivered">${escapeHtml(status)}</span>`;
+  if (status === "Partial") return `<span class="badge badge--progress">${escapeHtml(status)}</span>`;
+  if (status === "Refunded") return `<span class="badge badge--overdue">${escapeHtml(status)}</span>`;
+  return `<span class="badge badge--overdue">${escapeHtml(status)}</span>`;
+}
+
+function activityIcon(type) {
+  const map = { created: "＋", status: "↦", payment: "$", due_date: "📅", amount: "¤", note: "💬" };
+  return map[type] || "•";
 }
 
 function statusBadge(status) {
@@ -173,14 +191,79 @@ function renderDashboard() {
   const d = state.dashboard;
   if (!d) return;
 
+  const overdueRows =
+    d.needsAttention?.overdue?.length > 0
+      ? d.needsAttention.overdue
+          .map(
+            (o) => `<tr data-order-id="${o.id}">
+              <td><strong>${escapeHtml(o.orderId)}</strong></td>
+              <td>${escapeHtml(o.clientName)}</td>
+              <td><span class="badge badge--overdue">${o.daysOverdue}d late</span></td>
+              <td class="money">${money(o.totalCost)}</td>
+            </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="4" class="empty">No overdue orders</td></tr>`;
+
+  const unpaidRows =
+    d.needsAttention?.unpaid?.length > 0
+      ? d.needsAttention.unpaid
+          .map(
+            (o) => `<tr data-order-id="${o.id}">
+              <td><strong>${escapeHtml(o.orderId)}</strong></td>
+              <td>${escapeHtml(o.clientName)}</td>
+              <td>${paymentBadge(o.paymentStatus)}</td>
+              <td class="money">${money(o.totalCost)}</td>
+            </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="4" class="empty">All open orders are paid</td></tr>`;
+
+  const activityItems =
+    d.recentActivity?.length > 0
+      ? d.recentActivity
+          .map(
+            (a) => `<li class="timeline__item" data-order-id="${escapeHtml(a.orderId)}">
+              <span class="timeline__icon" aria-hidden="true">${activityIcon(a.type)}</span>
+              <div>
+                <div class="timeline__title">${escapeHtml(a.orderLabel)} · ${escapeHtml(a.message)}</div>
+                <div class="timeline__meta">${formatDateTime(a.createdAt)}${a.clientName ? ` · ${escapeHtml(a.clientName)}` : ""}</div>
+              </div>
+            </li>`
+          )
+          .join("")
+      : `<li class="timeline__item timeline__item--empty">Activity will appear as you update orders.</li>`;
+
   $("#view-dashboard").innerHTML = `
     <div class="stats">
       <div class="stat"><div class="stat__label">Clients</div><div class="stat__value">${d.totalClients}</div></div>
       <div class="stat"><div class="stat__label">Open orders</div><div class="stat__value">${d.openOrders}</div></div>
-      <div class="stat"><div class="stat__label">Overdue</div><div class="stat__value">${d.overdueOrders}</div></div>
+      <div class="stat stat--warn"><div class="stat__label">Overdue</div><div class="stat__value">${d.overdueOrders}</div></div>
+      <div class="stat stat--warn"><div class="stat__label">Unpaid (open)</div><div class="stat__value">${d.unpaidOrders}</div></div>
       <div class="stat"><div class="stat__label">Open value</div><div class="stat__value money">${money(d.openValue)}</div></div>
+      <div class="stat"><div class="stat__label">Unpaid value</div><div class="stat__value money">${money(d.unpaidValue || 0)}</div></div>
     </div>
     <div class="grid-2">
+      <div class="panel">
+        <div class="panel__header"><h2>Needs attention — overdue</h2></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Order</th><th>Client</th><th>Late</th><th>Total</th></tr></thead>
+            <tbody>${overdueRows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2>Needs attention — unpaid</h2></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Order</th><th>Client</th><th>Payment</th><th>Total</th></tr></thead>
+            <tbody>${unpaidRows}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:1rem;">
       <div class="panel">
         <div class="panel__header"><h2>Recent orders</h2></div>
         <div class="table-wrap">
@@ -203,23 +286,15 @@ function renderDashboard() {
         </div>
       </div>
       <div class="panel">
-        <div class="panel__header"><h2>Pipeline</h2></div>
-        <div style="padding:1rem;">
-          ${state.meta.orderStatuses
-            .map(
-              (s) => `<div style="display:flex;justify-content:space-between;padding:0.55rem 0;border-bottom:1px solid var(--border);">
-                <span>${escapeHtml(s)}</span><strong>${d.byStatus[s] || 0}</strong>
-              </div>`
-            )
-            .join("")}
-        </div>
+        <div class="panel__header"><h2>Recent activity</h2></div>
+        <ul class="timeline">${activityItems}</ul>
       </div>
     </div>
   `;
 
-  $$("#view-dashboard tr[data-order-id]").forEach((row) => {
-    row.style.cursor = "pointer";
-    row.onclick = () => openOrderModal(row.dataset.orderId);
+  $$("#view-dashboard [data-order-id]").forEach((el) => {
+    el.style.cursor = "pointer";
+    el.onclick = () => openOrderDetail(el.dataset.orderId);
   });
 }
 
@@ -228,10 +303,22 @@ function filteredOrders() {
   return state.orders.filter((o) => {
     if (state.orderFilter.status && o.status !== state.orderFilter.status) return false;
     if (state.orderFilter.clientId && o.clientId !== state.orderFilter.clientId) return false;
+    if (state.orderFilter.attention === "overdue" && !(o.isOpen && o.daysOverdue > 0)) return false;
+    if (
+      state.orderFilter.attention === "unpaid" &&
+      !(o.isOpen && (o.paymentStatus === "Unpaid" || o.paymentStatus === "Partial"))
+    )
+      return false;
+    if (state.orderFilter.attention === "open" && !o.isOpen) return false;
     if (!q) return true;
     const hay = [o.orderId, o.clientName, o.items, o.notes].join(" ").toLowerCase();
     return hay.includes(q);
   });
+}
+
+function attentionChip(value, label) {
+  const active = state.orderFilter.attention === value ? " is-active" : "";
+  return `<button type="button" class="chip${active}" data-attention="${value}">${label}</button>`;
 }
 
 function renderOrders() {
@@ -268,6 +355,12 @@ function renderOrders() {
         ${clientOptions}
       </select>
     </div>
+    <div class="chips">
+      ${attentionChip("", "All")}
+      ${attentionChip("open", "Open")}
+      ${attentionChip("overdue", "Overdue")}
+      ${attentionChip("unpaid", "Unpaid")}
+    </div>
     <div class="kanban">${kanbanCols}</div>
     <div class="panel">
       <div class="panel__header"><h2>All orders</h2></div>
@@ -292,6 +385,7 @@ function renderOrders() {
                         <td>${escapeHtml(o.paymentStatus)}</td>
                         <td class="money">${money(o.totalCost)}</td>
                         <td class="row-actions">
+                          <button type="button" class="btn" data-view-order="${o.id}">View</button>
                           <button type="button" class="btn" data-edit-order="${o.id}">Edit</button>
                           <button type="button" class="btn btn--danger" data-delete-order="${o.id}">Delete</button>
                         </td>
@@ -318,9 +412,22 @@ function renderOrders() {
     state.orderFilter.clientId = e.target.value;
     renderOrders();
   };
+  $$(".chip[data-attention]").forEach((chip) => {
+    chip.onclick = () => {
+      state.orderFilter.attention = chip.dataset.attention;
+      renderOrders();
+    };
+  });
 
   $$("[data-order-id]").forEach((el) => {
-    el.onclick = () => openOrderModal(el.dataset.orderId);
+    if (el.closest(".row-actions")) return;
+    el.onclick = () => openOrderDetail(el.dataset.orderId);
+  });
+  $$("[data-view-order]").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      openOrderDetail(btn.dataset.viewOrder);
+    };
   });
   $$("[data-edit-order]").forEach((btn) => {
     btn.onclick = (e) => {
@@ -366,6 +473,7 @@ function renderClients() {
                         <td>${c.totalOpenOrders}</td>
                         <td class="money">${money(c.totalOpenValue)}</td>
                         <td class="row-actions">
+                          <button type="button" class="btn" data-view-client="${c.id}">View</button>
                           <button type="button" class="btn" data-edit-client="${c.id}">Edit</button>
                           <button type="button" class="btn" data-view-client-orders="${c.id}">Orders</button>
                           <button type="button" class="btn btn--danger" data-delete-client="${c.id}">Delete</button>
@@ -384,6 +492,9 @@ function renderClients() {
   $$("[data-edit-client]").forEach((btn) => {
     btn.onclick = () => openClientModal(btn.dataset.editClient);
   });
+  $$("[data-view-client]").forEach((btn) => {
+    btn.onclick = () => openClientDetail(btn.dataset.viewClient);
+  });
   $$("[data-view-client-orders]").forEach((btn) => {
     btn.onclick = () => {
       state.orderFilter.clientId = btn.dataset.viewClientOrders;
@@ -400,14 +511,26 @@ function renderClients() {
   });
 }
 
-function openModal(title, bodyHtml, onSave) {
+function openModal(title, bodyHtml, onSave, options = {}) {
   $("#modal-title").textContent = title;
   $("#modal-body").innerHTML = bodyHtml;
+  const panel = $("#modal-panel");
+  panel.classList.toggle("modal__panel--wide", Boolean(options.wide));
+  const saveBtn = $("#modal-save");
+  if (options.hideSave) {
+    saveBtn.hidden = true;
+    saveBtn.type = "button";
+  } else {
+    saveBtn.hidden = false;
+    saveBtn.type = "submit";
+    saveBtn.textContent = options.saveLabel || "Save";
+  }
   const dialog = $("#modal");
   dialog.showModal();
   const form = $("#modal-form");
   form.onsubmit = async (e) => {
     e.preventDefault();
+    if (options.hideSave) return;
     try {
       await onSave(new FormData(form));
       dialog.close();
@@ -415,6 +538,163 @@ function openModal(title, bodyHtml, onSave) {
       toast(err.message);
     }
   };
+}
+
+async function quickOrderPatch(orderId, payload) {
+  await api(`/api/orders/${orderId}/quick`, { method: "PATCH", body: JSON.stringify(payload) });
+  await refresh();
+}
+
+async function openOrderDetail(id) {
+  const order = state.orders.find((o) => o.id === id) || (await api(`/api/orders/${id}`));
+  const activity = await api(`/api/orders/${id}/activity`);
+  const flow = state.meta.orderStatuses;
+  const next = flow[flow.indexOf(order.status) + 1];
+  const timeline =
+    activity.length > 0
+      ? activity
+          .map(
+            (a) => `<li class="timeline__item">
+              <span class="timeline__icon" aria-hidden="true">${activityIcon(a.type)}</span>
+              <div>
+                <div class="timeline__title">${escapeHtml(a.message)}</div>
+                <div class="timeline__meta">${formatDateTime(a.createdAt)}</div>
+              </div>
+            </li>`
+          )
+          .join("")
+      : `<li class="timeline__item timeline__item--empty">No activity yet.</li>`;
+
+  const body = `
+    <div class="detail-grid">
+      <div><span class="detail-label">Client</span><strong>${escapeHtml(order.clientName)}</strong></div>
+      <div><span class="detail-label">Status</span>${statusBadge(order.status)}</div>
+      <div><span class="detail-label">Payment</span>${paymentBadge(order.paymentStatus)}</div>
+      <div><span class="detail-label">Total</span><strong class="money">${money(order.totalCost)}</strong></div>
+      <div><span class="detail-label">Received</span>${formatDate(order.dateReceived)}</div>
+      <div><span class="detail-label">Due</span>${formatDate(order.dueDate)}${order.daysOverdue ? ` <span class="badge badge--overdue">${order.daysOverdue}d late</span>` : ""}</div>
+    </div>
+    ${order.items ? `<div class="detail-block"><span class="detail-label">Items</span><p>${escapeHtml(order.items)}</p></div>` : ""}
+    ${order.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(order.notes)}</p></div>` : ""}
+    <div class="detail-actions">
+      ${next ? `<button type="button" class="btn btn--primary" id="detail-advance">Advance to ${escapeHtml(next)}</button>` : ""}
+      ${order.paymentStatus !== "Paid" ? `<button type="button" class="btn" id="detail-mark-paid">Mark paid</button>` : ""}
+      <button type="button" class="btn" id="detail-edit">Edit order</button>
+    </div>
+    <div class="detail-block">
+      <span class="detail-label">Activity</span>
+      <ul class="timeline timeline--compact">${timeline}</ul>
+    </div>
+    <div class="detail-note">
+      <label for="detail-note-input">Add note</label>
+      <div class="detail-note__row">
+        <input id="detail-note-input" type="text" placeholder="Call client, shipped via UPS…" />
+        <button type="button" class="btn btn--primary" id="detail-add-note">Add</button>
+      </div>
+    </div>
+  `;
+
+  openModal(order.orderId, body, null, { wide: true, hideSave: true });
+  $("#modal-cancel").textContent = "Close";
+
+  if (next) {
+    $("#detail-advance").onclick = async () => {
+      await quickOrderPatch(id, { advanceStatus: true });
+      toast(`Moved to ${next}`);
+      $("#modal").close();
+      openOrderDetail(id);
+    };
+  }
+  if (order.paymentStatus !== "Paid") {
+    $("#detail-mark-paid").onclick = async () => {
+      await quickOrderPatch(id, { paymentStatus: "Paid" });
+      toast("Marked as paid");
+      $("#modal").close();
+      openOrderDetail(id);
+    };
+  }
+  $("#detail-edit").onclick = () => {
+    $("#modal").close();
+    openOrderModal(id);
+  };
+  $("#detail-add-note").onclick = async () => {
+    const text = $("#detail-note-input").value.trim();
+    if (!text) return;
+    await api(`/api/orders/${id}/activity`, { method: "POST", body: JSON.stringify({ message: text }) });
+    toast("Note added");
+    $("#modal").close();
+    await refresh();
+    openOrderDetail(id);
+  };
+}
+
+async function openClientDetail(id) {
+  const data = await api(`/api/clients/${id}?detail=1`);
+  const orderRows =
+    data.orders?.length > 0
+      ? data.orders
+          .map(
+            (o) => `<tr data-order-id="${o.id}">
+              <td><strong>${escapeHtml(o.orderId)}</strong></td>
+              <td>${statusBadge(o.status)}</td>
+              <td>${paymentBadge(o.paymentStatus)}</td>
+              <td>${formatDate(o.dueDate)}</td>
+              <td class="money">${money(o.totalCost)}</td>
+            </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="5" class="empty">No orders yet</td></tr>`;
+
+  const body = `
+    <div class="detail-grid">
+      <div><span class="detail-label">Email</span>${escapeHtml(data.email || "—")}</div>
+      <div><span class="detail-label">Phone</span>${escapeHtml(data.phone || "—")}</div>
+      <div><span class="detail-label">Open orders</span><strong>${data.totalOpenOrders}</strong></div>
+      <div><span class="detail-label">Open value</span><strong class="money">${money(data.totalOpenValue)}</strong></div>
+    </div>
+    ${data.address ? `<div class="detail-block"><span class="detail-label">Address</span><p>${escapeHtml(data.address)}</p></div>` : ""}
+    ${data.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(data.notes)}</p></div>` : ""}
+    <div class="detail-actions">
+      <button type="button" class="btn btn--primary" id="detail-new-order">+ New order</button>
+      <button type="button" class="btn" id="detail-edit-client">Edit client</button>
+    </div>
+    <div class="detail-block">
+      <span class="detail-label">Orders for this client</span>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Order</th><th>Status</th><th>Payment</th><th>Due</th><th>Total</th></tr></thead>
+          <tbody>${orderRows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  openModal(data.name, body, null, { wide: true, hideSave: true });
+  $("#modal-cancel").textContent = "Close";
+  $("#detail-edit-client").onclick = () => {
+    $("#modal").close();
+    openClientModal(id);
+  };
+  $("#detail-new-order").onclick = () => {
+    $("#modal").close();
+    openOrderModal();
+    setTimeout(() => {
+      const sel = $("#clientId");
+      if (sel) sel.value = id;
+    }, 50);
+  };
+  $$("#modal-body [data-order-id]").forEach((row) => {
+    row.style.cursor = "pointer";
+    row.onclick = () => {
+      $("#modal").close();
+      openOrderDetail(row.dataset.orderId);
+    };
+  });
+}
+
+function openModalForm(title, bodyHtml, onSave) {
+  $("#modal-cancel").textContent = "Cancel";
+  openModal(title, bodyHtml, onSave);
 }
 
 function field(name, label, value = "", type = "text", options = {}) {
@@ -441,7 +721,7 @@ function openClientModal(id = null) {
     ${field("address", "Address", existing?.address || "")}
     ${field("notes", "Notes", existing?.notes || "", "textarea")}
   `;
-  openModal(existing ? "Edit client" : "New client", body, async (fd) => {
+  openModalForm(existing ? "Edit client" : "New client", body, async (fd) => {
     const payload = Object.fromEntries(fd.entries());
     if (existing) {
       await api(`/api/clients/${existing.id}`, { method: "PUT", body: JSON.stringify(payload) });
@@ -487,7 +767,7 @@ function openOrderModal(id = null) {
     ${field("notes", "Notes", existing?.notes || "", "textarea")}
   `;
 
-  openModal(existing ? "Edit order" : "New order", body, async (fd) => {
+  openModalForm(existing ? "Edit order" : "New order", body, async (fd) => {
     const payload = Object.fromEntries(fd.entries());
     payload.quantity = Number(payload.quantity);
     payload.totalCost = Number(payload.totalCost);

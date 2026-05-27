@@ -19,8 +19,11 @@ Without `DATABASE_URL`, data is stored in `data/store.json`. Without `CRM_PASSWO
 
 ## Features
 
-- **Dashboard** — open orders, overdue count, pipeline by status
+- **Dashboard** — open/overdue/unpaid stats, needs-attention lists, recent activity feed
 - **Clients & orders** — full CRUD, Kanban, search and filters
+- **Order detail** — activity timeline, quick status advance, mark paid, add notes
+- **Client detail** — contact summary and full order history per client
+- **Smart filters** — Open, Overdue, Unpaid chips on the Orders view
 - **CSV export** — download clients or orders from the Orders / Clients screens
 - **Password login** — enable with `CRM_PASSWORD` (required for public hosting)
 - **PostgreSQL** — persistent storage when `DATABASE_URL` is set (auto on Render)
@@ -64,15 +67,20 @@ See `.env.example` for local development.
 | GET | `/api/export/orders.csv` | Export orders |
 | GET | `/api/dashboard` | Summary stats |
 | GET/POST | `/api/clients` | List or create clients |
-| GET/PUT/DELETE | `/api/clients/:id` | Single client |
-| GET/POST | `/api/orders` | List or create orders |
 | GET/PUT/DELETE | `/api/orders/:id` | Single order |
+| GET | `/api/clients/:id?detail=1` | Client with order list |
+| GET/POST | `/api/orders` | List or create orders |
+| GET | `/api/orders/:id/activity` | Order change history |
+| POST | `/api/orders/:id/activity` | Add a note to the timeline |
+| PATCH | `/api/orders/:id/quick` | Quick status / payment update |
 
 ## Roadmap
 
 - [x] Persistent PostgreSQL on Render
 - [x] Password login
 - [x] CSV export
+- [x] Order activity timeline and quick actions
+- [x] Needs-attention dashboard (overdue / unpaid)
 - [ ] PWA install prompt + app icons
 - [ ] Desktop/mobile app shell (Tauri / Capacitor)
 - [ ] Multi-user accounts (optional)

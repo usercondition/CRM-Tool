@@ -20,6 +20,7 @@ const {
   validateOrder,
   toCsv,
 } = require("./lib/helpers");
+const { nextStatus } = require("./lib/activity");
 
 const PORT = Number(process.env.PORT || 3847);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -75,20 +76,35 @@ async function buildDashboard(store) {
   const orders = ordersRaw.map((o) => enrichOrder(o, clientsById));
   const openOrders = orders.filter((o) => o.isOpen);
   const overdue = openOrders.filter((o) => o.daysOverdue > 0);
+  const unpaidOpen = openOrders.filter((o) => o.paymentStatus === "Unpaid" || o.paymentStatus === "Partial");
   const byStatus = ORDER_STATUSES.reduce((acc, s) => {
     acc[s] = orders.filter((o) => o.status === s).length;
     return acc;
   }, {});
+  const ordersById = Object.fromEntries(orders.map((o) => [o.id, o]));
+  const recentActivityRaw = await store.listRecentActivity(12);
+  const recentActivity = recentActivityRaw.map((a) => ({
+    ...a,
+    orderLabel: ordersById[a.orderId]?.orderId || a.orderId,
+    clientName: ordersById[a.orderId]?.clientName || "",
+  }));
   return {
     totalClients: clients.length,
     totalOrders: orders.length,
     openOrders: openOrders.length,
     overdueOrders: overdue.length,
+    unpaidOrders: unpaidOpen.length,
     openValue: openOrders.reduce((sum, o) => sum + (Number(o.totalCost) || 0), 0),
+    unpaidValue: unpaidOpen.reduce((sum, o) => sum + (Number(o.totalCost) || 0), 0),
     byStatus,
     recentOrders: [...orders]
       .sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || ""))
       .slice(0, 5),
+    needsAttention: {
+      overdue: [...overdue].sort((a, b) => b.daysOverdue - a.daysOverdue).slice(0, 8),
+      unpaid: [...unpaidOpen].sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || "")).slice(0, 8),
+    },
+    recentActivity,
   };
 }
 
@@ -270,7 +286,17 @@ async function startServer() {
               sendJson(res, 404, { error: "Client not found." });
               return;
             }
-            sendJson(res, 200, enrichClient(client, orders));
+            const enriched = enrichClient(client, orders);
+            const clientsById = Object.fromEntries((await store.listClients()).map((c) => [c.id, c]));
+            const clientOrders = orders
+              .filter((o) => o.clientId === id)
+              .map((o) => enrichOrder(o, clientsById))
+              .sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || ""));
+            if (url.searchParams.get("detail") === "1") {
+              sendJson(res, 200, { ...enriched, orders: clientOrders });
+              return;
+            }
+            sendJson(res, 200, enriched);
             return;
           }
 
@@ -310,8 +336,16 @@ async function startServer() {
             let orders = (await store.listOrders()).map((o) => enrichOrder(o, clientsById));
             const clientId = url.searchParams.get("clientId");
             const status = url.searchParams.get("status");
+            const attention = url.searchParams.get("attention");
             if (clientId) orders = orders.filter((o) => o.clientId === clientId);
             if (status) orders = orders.filter((o) => o.status === status);
+            if (attention === "overdue") orders = orders.filter((o) => o.isOpen && o.daysOverdue > 0);
+            if (attention === "unpaid") {
+              orders = orders.filter(
+                (o) => o.isOpen && (o.paymentStatus === "Unpaid" || o.paymentStatus === "Partial")
+              );
+            }
+            if (attention === "open") orders = orders.filter((o) => o.isOpen);
             orders.sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || ""));
             sendJson(res, 200, orders);
             return;
@@ -332,6 +366,74 @@ async function startServer() {
             sendJson(res, 201, enrichOrder(order, clientsById));
             return;
           }
+        }
+
+        const orderActivityMatch = pathname.match(/^\/api\/orders\/([^/]+)\/activity$/);
+        if (orderActivityMatch) {
+          const id = orderActivityMatch[1];
+          const order = await store.getOrder(id);
+          if (!order) {
+            sendJson(res, 404, { error: "Order not found." });
+            return;
+          }
+          if (req.method === "GET") {
+            sendJson(res, 200, await store.listOrderActivity(id));
+            return;
+          }
+          if (req.method === "POST") {
+            const body = await readBody(req);
+            const text = String(body?.message || "").trim();
+            if (!text) {
+              sendJson(res, 400, { error: "Note message is required." });
+              return;
+            }
+            await store.addOrderNote(id, text);
+            sendJson(res, 201, { ok: true });
+            return;
+          }
+        }
+
+        const orderQuickMatch = pathname.match(/^\/api\/orders\/([^/]+)\/quick$/);
+        if (orderQuickMatch && req.method === "PATCH") {
+          const id = orderQuickMatch[1];
+          const existing = await store.getOrder(id);
+          if (!existing) {
+            sendJson(res, 404, { error: "Order not found." });
+            return;
+          }
+          const body = await readBody(req);
+          const patch = {};
+          if (body?.status !== undefined) {
+            if (!ORDER_STATUSES.includes(body.status)) {
+              sendJson(res, 400, { error: "Invalid status." });
+              return;
+            }
+            patch.status = body.status;
+          }
+          if (body?.paymentStatus !== undefined) {
+            if (!PAYMENT_STATUSES.includes(body.paymentStatus)) {
+              sendJson(res, 400, { error: "Invalid payment status." });
+              return;
+            }
+            patch.paymentStatus = body.paymentStatus;
+          }
+          if (body?.advanceStatus) {
+            const next = nextStatus(existing.status);
+            if (!next) {
+              sendJson(res, 400, { error: "Order is already at final status." });
+              return;
+            }
+            patch.status = next;
+          }
+          if (!Object.keys(patch).length) {
+            sendJson(res, 400, { error: "No changes requested." });
+            return;
+          }
+          const clients = await store.listClients();
+          const clientsById = Object.fromEntries(clients.map((c) => [c.id, c]));
+          const updated = await store.updateOrder(id, patch);
+          sendJson(res, 200, enrichOrder(updated, clientsById));
+          return;
         }
 
         const orderMatch = pathname.match(/^\/api\/orders\/([^/]+)$/);

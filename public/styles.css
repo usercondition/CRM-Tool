@@ -258,6 +258,137 @@ textarea {
   font-weight: 700;
 }
 
+.stat--warn .stat__value {
+  color: #fbbf24;
+}
+
+.chips {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.chip.is-active,
+.chip:hover {
+  color: var(--text);
+  border-color: #3d465a;
+  background: var(--surface-2);
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0.75rem 1rem 1rem;
+}
+
+.timeline--compact {
+  padding: 0;
+}
+
+.timeline__item {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.timeline__item:last-child {
+  border-bottom: 0;
+}
+
+.timeline__item--empty {
+  color: var(--muted);
+}
+
+.timeline__icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 8px;
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.timeline__title {
+  font-size: 0.9rem;
+}
+
+.timeline__meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-top: 0.15rem;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.85rem;
+}
+
+.detail-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-bottom: 0.2rem;
+}
+
+.detail-block {
+  margin-top: 1rem;
+}
+
+.detail-block p {
+  margin: 0.35rem 0 0;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.detail-note {
+  margin-top: 1rem;
+}
+
+.detail-note label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 0.35rem;
+}
+
+.detail-note__row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.detail-note__row input {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+}
+
+.modal__panel--wide {
+  width: min(720px, calc(100vw - 2rem));
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -553,7 +684,8 @@ tr:hover td {
   }
 
   .grid-2,
-  .kanban {
+  .kanban,
+  .detail-grid {
     grid-template-columns: 1fr;
   }
 
