@@ -11,9 +11,29 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0f1219" />
   </head>
   <body>
-    <div class="app">
+    <div id="login-screen" class="login-screen" hidden>
+      <form id="login-form" class="login-card">
+        <div class="brand brand--center">
+          <span class="brand__mark" aria-hidden="true">◫</span>
+          <div>
+            <strong>Simple CRM</strong>
+            <span>Sign in to continue</span>
+          </div>
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="btn btn--primary btn--block">Sign in</button>
+        <p id="login-error" class="login-error" hidden></p>
+      </form>
+    </div>
+
+    <div class="app" id="app-root" hidden>
       <aside class="sidebar">
         <div class="brand">
           <span class="brand__mark" aria-hidden="true">◫</span>
@@ -27,6 +47,10 @@
           <button type="button" class="nav__item" data-view="orders">Orders</button>
           <button type="button" class="nav__item" data-view="clients">Clients</button>
         </nav>
+        <div class="sidebar__footer">
+          <p id="storage-badge" class="storage-badge" title="Where your data is stored"></p>
+          <button type="button" class="btn btn--ghost btn--block" id="logout-btn" hidden>Sign out</button>
+        </div>
       </aside>
 
       <main class="main">

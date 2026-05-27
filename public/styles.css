@@ -50,6 +50,59 @@ textarea {
   background: rgba(23, 27, 36, 0.85);
   backdrop-filter: blur(10px);
   padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.sidebar__footer {
+  margin-top: auto;
+  padding-top: 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.storage-badge {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.login-card {
+  width: min(400px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 1rem;
+}
+
+.brand--center {
+  justify-content: center;
+  text-align: center;
+  flex-direction: column;
+  margin-bottom: 0.25rem;
+}
+
+.login-error {
+  margin: 0;
+  color: #fecaca;
+  font-size: 0.9rem;
+  text-align: center;
 }
 
 .brand {

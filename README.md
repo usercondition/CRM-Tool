@@ -1,6 +1,6 @@
 # CRM Tool
 
-A lightweight CRM to track **clients** and **orders**. Runs locally or online from a single Node.js server with JSON file storage.
+A lightweight CRM to track **clients** and **orders**. Runs locally or online on [Render](https://render.com) with optional PostgreSQL storage and password protection.
 
 **Repository:** [github.com/usercondition/CRM-Tool](https://github.com/usercondition/CRM-Tool)
 
@@ -9,75 +9,76 @@ A lightweight CRM to track **clients** and **orders**. Runs locally or online fr
 ```bash
 git clone https://github.com/usercondition/CRM-Tool.git
 cd CRM-Tool
+npm install
 node server.js
 ```
 
 Open **http://localhost:3847**
 
-Optional: `PORT=4000 node server.js`
+Without `DATABASE_URL`, data is stored in `data/store.json`. Without `CRM_PASSWORD`, login is disabled.
 
 ## Features
 
-- **Dashboard** — open orders, overdue count, pipeline by status, recent activity
-- **Clients** — name, email, phone, address, notes; rollups for open orders and value
-- **Orders** — Kanban by status, searchable table, due dates, payment status, overdue flags
-- **CRUD** — add, edit, and delete clients and orders in the browser
+- **Dashboard** — open orders, overdue count, pipeline by status
+- **Clients & orders** — full CRUD, Kanban, search and filters
+- **CSV export** — download clients or orders from the Orders / Clients screens
+- **Password login** — enable with `CRM_PASSWORD` (required for public hosting)
+- **PostgreSQL** — persistent storage when `DATABASE_URL` is set (auto on Render)
 
-## Host online (recommended: Render)
+## Deploy on Render (online)
 
-GitHub stores the code; it does **not** run the Node server. To make the app accessible on the web:
+1. Repo is at [usercondition/CRM-Tool](https://github.com/usercondition/CRM-Tool).
+2. In Render: **New → Blueprint** → select the repo → deploy.
+3. The blueprint creates a **web service** and a **free PostgreSQL database** linked via `DATABASE_URL`.
+4. In the web service **Environment**, add:
+   - `CRM_PASSWORD` = a strong password you will use to sign in
+5. Redeploy if needed, then open your Render URL and sign in.
 
-1. Push this repo to [usercondition/CRM-Tool](https://github.com/usercondition/CRM-Tool) (see below if empty).
-2. Sign up at [Render](https://render.com) and connect your GitHub account.
-3. **New → Blueprint** → select **CRM-Tool** → deploy using the included `render.yaml`.
-4. Render gives you a public URL like `https://crm-tool.onrender.com`.
+### After deploy checklist
 
-Alternative hosts that run Node.js: [Railway](https://railway.app), [Fly.io](https://fly.io), or any VPS.
+- [ ] Set `CRM_PASSWORD` in Render environment
+- [ ] Sign in at your public URL
+- [ ] Add a real client and order — confirm they survive a redeploy (PostgreSQL)
+- [ ] Use **Export CSV** to back up data periodically
 
-### Data on free hosting
+## Environment variables
 
-On Render’s free plan, the filesystem is **ephemeral** — data may reset when the service redeploys or restarts. For real production use:
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `CRM_PASSWORD` | Yes (production) | Single shared login password |
+| `CRM_SESSION_SECRET` | No | Cookie signing secret (defaults to `CRM_PASSWORD`) |
+| `DATABASE_URL` | No (yes on Render) | PostgreSQL connection string |
+| `PORT` | No | Server port (Render sets automatically) |
 
-- Add a [Render persistent disk](https://render.com/docs/disks), or
-- Move storage to a database (SQLite/Turso/Postgres) in a later update.
-
-Back up `data/store.json` regularly when self-hosting locally.
-
-## Push code to GitHub
-
-From this folder:
-
-```bash
-git init
-git add .
-git commit -m "Initial CRM tool — clients, orders, dashboard"
-git branch -M main
-git remote add origin https://github.com/usercondition/CRM-Tool.git
-git push -u origin main
-```
-
-If the remote already has commits, use `git pull origin main --rebase` first, then push.
+See `.env.example` for local development.
 
 ## API
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/api/health` | Health check (for hosting) |
+| GET | `/api/health` | Health check |
+| GET | `/api/auth/status` | Login state |
+| POST | `/api/auth/login` | Sign in |
+| POST | `/api/auth/logout` | Sign out |
+| GET | `/api/export/clients.csv` | Export clients |
+| GET | `/api/export/orders.csv` | Export orders |
 | GET | `/api/dashboard` | Summary stats |
 | GET/POST | `/api/clients` | List or create clients |
 | GET/PUT/DELETE | `/api/clients/:id` | Single client |
-| GET/POST | `/api/orders` | List or create orders (`?clientId=&status=`) |
+| GET/POST | `/api/orders` | List or create orders |
 | GET/PUT/DELETE | `/api/orders/:id` | Single order |
+
+## Roadmap
+
+- [x] Persistent PostgreSQL on Render
+- [x] Password login
+- [x] CSV export
+- [ ] PWA install prompt + app icons
+- [ ] Desktop/mobile app shell (Tauri / Capacitor)
+- [ ] Multi-user accounts (optional)
 
 ## Order workflow
 
 Status: `New` → `In Progress` → `Shipped` → `Delivered`
 
 Payment: `Unpaid`, `Partial`, `Paid`, `Refunded`
-
-## Roadmap
-
-- [ ] Persistent cloud database for production hosting
-- [ ] Optional login for multi-user access
-- [ ] Export to CSV
-- [ ] Packaged desktop/mobile app (e.g. Tauri or PWA) once the web version is stable

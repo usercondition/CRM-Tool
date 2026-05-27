@@ -1,6 +1,7 @@
 const state = {
   view: "dashboard",
   meta: null,
+  auth: null,
   clients: [],
   orders: [],
   dashboard: null,
@@ -12,12 +13,45 @@ const $$ = (sel) => [...document.querySelectorAll(sel)];
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== "/api/auth/login") {
+    showLogin();
+    throw new Error(data.error || "Login required.");
+  }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
+}
+
+function showLogin(message = "") {
+  $("#app-root").hidden = true;
+  $("#login-screen").hidden = false;
+  const err = $("#login-error");
+  if (message) {
+    err.textContent = message;
+    err.hidden = false;
+  } else {
+    err.hidden = true;
+  }
+}
+
+function showApp() {
+  $("#login-screen").hidden = true;
+  $("#app-root").hidden = false;
+}
+
+function updateChrome() {
+  const badge = $("#storage-badge");
+  const logout = $("#logout-btn");
+  if (state.meta?.storage === "postgres") {
+    badge.textContent = "Storage: PostgreSQL";
+  } else {
+    badge.textContent = "Storage: local JSON";
+  }
+  logout.hidden = !state.auth?.authRequired;
 }
 
 function money(n) {
@@ -80,29 +114,46 @@ function setView(view) {
 function renderTopbarActions() {
   const actions = $("#topbar-actions");
   if (state.view === "orders") {
-    actions.innerHTML = `<button type="button" class="btn btn--primary" id="add-order-btn">+ New order</button>`;
+    actions.innerHTML = `
+      <button type="button" class="btn" id="export-orders-btn">Export CSV</button>
+      <button type="button" class="btn btn--primary" id="add-order-btn">+ New order</button>`;
+    $("#export-orders-btn").onclick = () => downloadExport("/api/export/orders.csv", "orders.csv");
     $("#add-order-btn").onclick = () => openOrderModal();
     return;
   }
   if (state.view === "clients") {
-    actions.innerHTML = `<button type="button" class="btn btn--primary" id="add-client-btn">+ New client</button>`;
+    actions.innerHTML = `
+      <button type="button" class="btn" id="export-clients-btn">Export CSV</button>
+      <button type="button" class="btn btn--primary" id="add-client-btn">+ New client</button>`;
+    $("#export-clients-btn").onclick = () => downloadExport("/api/export/clients.csv", "clients.csv");
     $("#add-client-btn").onclick = () => openClientModal();
     return;
   }
   actions.innerHTML = "";
 }
 
+function downloadExport(url, filename) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  toast("Download started");
+}
+
 async function loadAll() {
-  const [meta, clients, orders, dashboard] = await Promise.all([
+  const [auth, meta, clients, orders, dashboard] = await Promise.all([
+    api("/api/auth/status"),
     api("/api/meta"),
     api("/api/clients"),
     api("/api/orders"),
     api("/api/dashboard"),
   ]);
+  state.auth = auth;
   state.meta = meta;
   state.clients = clients;
   state.orders = orders;
   state.dashboard = dashboard;
+  updateChrome();
 }
 
 function renderCurrentView() {
@@ -464,15 +515,41 @@ function wireChrome() {
   });
   $("#modal-close").onclick = () => $("#modal").close();
   $("#modal-cancel").onclick = () => $("#modal").close();
+  $("#login-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const password = $("#login-password").value;
+    try {
+      await api("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) });
+      $("#login-password").value = "";
+      showApp();
+      await loadAll();
+      setView("dashboard");
+      toast("Signed in");
+    } catch (err) {
+      showLogin(err.message);
+    }
+  };
+  $("#logout-btn").onclick = async () => {
+    await api("/api/auth/logout", { method: "POST" });
+    showLogin();
+    toast("Signed out");
+  };
 }
 
 async function init() {
   wireChrome();
   try {
+    const auth = await api("/api/auth/status");
+    state.auth = auth;
+    if (auth.authRequired && !auth.authenticated) {
+      showLogin();
+      return;
+    }
+    showApp();
     await loadAll();
     setView("dashboard");
   } catch (err) {
-    toast(err.message);
+    showLogin(err.message);
   }
 }
 
