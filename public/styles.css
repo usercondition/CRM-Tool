@@ -630,6 +630,15 @@ textarea {
   color: var(--muted);
 }
 
+.auto-number-note {
+  margin: -0.35rem 0 0.15rem;
+}
+
+.field input[readonly] {
+  opacity: 0.85;
+  cursor: default;
+}
+
 .global-search {
   position: relative;
   min-width: min(280px, 100%);

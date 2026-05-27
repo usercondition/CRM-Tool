@@ -1154,7 +1154,7 @@ function field(name, label, value = "", type = "text", options = {}) {
       .join("");
     return `<div class="field"><label for="${fieldId}">${label}</label><select id="${fieldId}" name="${fieldName}">${opts}</select></div>`;
   }
-  return `<div class="field"><label for="${fieldId}">${label}</label><input id="${fieldId}" name="${fieldName}" type="${type}" value="${escapeHtml(value)}"${options.required ? " required" : ""}${options.step !== undefined ? ` step="${escapeHtml(String(options.step))}"` : ""}${options.min !== undefined ? ` min="${escapeHtml(String(options.min))}"` : ""}${options.placeholder ? ` placeholder="${escapeHtml(options.placeholder)}"` : ""}${options.inputmode ? ` inputmode="${options.inputmode}"` : ""} /></div>`;
+  return `<div class="field"><label for="${fieldId}">${label}</label><input id="${fieldId}" name="${fieldName}" type="${type}" value="${escapeHtml(value)}"${options.required ? " required" : ""}${options.readonly ? " readonly" : ""}${options.step !== undefined ? ` step="${escapeHtml(String(options.step))}"` : ""}${options.min !== undefined ? ` min="${escapeHtml(String(options.min))}"` : ""}${options.placeholder ? ` placeholder="${escapeHtml(options.placeholder)}"` : ""}${options.inputmode ? ` inputmode="${options.inputmode}"` : ""} /></div>`;
 }
 
 function clientAddressForForm(client) {
@@ -1200,9 +1200,14 @@ function openClientModal(id = null) {
 }
 
 function openOrderModal(id = null, presetClientId = null) {
+  (async () => {
   try {
     const existing = id ? state.orders.find((o) => o.id === id) : null;
     const isNew = !existing;
+    let nextNumbers = { orderId: "", invoiceNumber: "" };
+    if (isNew) {
+      nextNumbers = await api("/api/orders/next-numbers");
+    }
     const hasClients = state.clients.length > 0;
     const defaultMode = isNew && !hasClients ? "new" : "existing";
 
@@ -1250,8 +1255,19 @@ function openOrderModal(id = null, presetClientId = null) {
     </div>`
       : `<div class="field"><label for="clientId">Client</label><select id="clientId" name="clientId" required>${clientOptions}</select></div>`;
 
+    const numberFields = existing
+      ? `<div class="field-row">
+          ${field("orderId", "Order ID", existing.orderId, "text", { required: true })}
+          ${field("invoiceNumber", "Invoice #", existing.invoiceNumber || "")}
+        </div>`
+      : `<div class="field-row">
+          ${field("orderId", "Order ID", nextNumbers.orderId, "text", { readonly: true })}
+          ${field("invoiceNumber", "Invoice #", nextNumbers.invoiceNumber, "text", { readonly: true })}
+        </div>
+        <p class="field-hint auto-number-note">Order and invoice numbers are assigned automatically when you save.</p>`;
+
     const body = `
-    ${field("orderId", "Order ID", existing?.orderId || suggestOrderId(), "text", { required: true })}
+    ${numberFields}
     ${clientSection}
     <div class="field-row">
       ${field("dateReceived", "Date received", existing?.dateReceived || today(), "date")}
@@ -1266,10 +1282,14 @@ function openOrderModal(id = null, presetClientId = null) {
       ${field("status", "Status", existing?.status || "New", "select", { choices: state.meta.orderStatuses })}
       ${field("paymentStatus", "Payment status", existing?.paymentStatus || "Unpaid", "select", { choices: state.meta.paymentStatuses })}
     </div>
-    <div class="field-row">
-      ${field("invoiceNumber", "Invoice #", existing?.invoiceNumber || "")}
-      ${field("poNumber", "PO #", existing?.poNumber || "")}
-    </div>
+    ${
+      existing
+        ? `<div class="field-row">
+            ${field("invoiceNumber", "Invoice #", existing.invoiceNumber || "")}
+            ${field("poNumber", "PO #", existing.poNumber || "")}
+          </div>`
+        : field("poNumber", "PO #", "")
+    }
     <div class="field">
       <label for="tags">Tags <span class="field-hint">comma-separated</span></label>
       <input id="tags" name="tags" type="text" value="${escapeHtml(existing?.tagsLabel || (Array.isArray(existing?.tags) ? existing.tags.join(", ") : existing?.tags || ""))}" />
@@ -1329,6 +1349,7 @@ function openOrderModal(id = null, presetClientId = null) {
   } catch (err) {
     toast(err.message || "Something went wrong.");
   }
+  })();
 }
 
 function wireNewClientToggle(initialMode) {
@@ -1355,11 +1376,6 @@ function wireNewClientToggle(initialMode) {
 
 function today() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function suggestOrderId() {
-  const stamp = today().replace(/-/g, "").slice(2);
-  return `${new Date().getFullYear()}-${stamp}-`;
 }
 
 async function refresh() {

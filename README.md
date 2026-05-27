@@ -86,7 +86,8 @@ See `.env.example` for local development.
 | GET/POST | `/api/clients` | List or create clients |
 | GET/PUT/DELETE | `/api/clients/:id` | Single client |
 | GET | `/api/clients/:id?detail=1` | Client with order list |
-| GET/POST | `/api/orders` | List or create orders |
+| GET | `/api/orders/next-numbers` | Preview next auto order + invoice numbers |
+| GET/POST | `/api/orders` | List or create orders (numbers assigned on create) |
 | GET/PUT/DELETE | `/api/orders/:id` | Single order |
 | GET/POST | `/api/orders/:id/activity` | Order timeline / add note |
 | PATCH | `/api/orders/:id/quick` | Quick status / payment update |

@@ -450,6 +450,11 @@ async function startServer() {
           }
         }
 
+        if (pathname === "/api/orders/next-numbers" && req.method === "GET") {
+          sendJson(res, 200, await store.peekOrderNumbers());
+          return;
+        }
+
         if (pathname === "/api/orders") {
           if (req.method === "GET") {
             const { orders } = await loadEnrichedData(store);
@@ -476,17 +481,23 @@ async function startServer() {
 
           if (req.method === "POST") {
             const body = await readBody(req);
-            const errors = validateOrder(body);
-            if (errors.length) {
-              sendJson(res, 400, { error: errors.join(" ") });
-              return;
-            }
             const clientsById = Object.fromEntries((await store.listClients()).map((c) => [c.id, c]));
             if (!clientsById[body.clientId]) {
               sendJson(res, 400, { error: "Client not found." });
               return;
             }
-            const order = await store.createOrder(normalizeOrderInput(body));
+            const assigned = await store.allocateOrderNumbers();
+            const input = normalizeOrderInput({
+              ...body,
+              orderId: assigned.orderId,
+              invoiceNumber: assigned.invoiceNumber,
+            });
+            const errors = validateOrder(input);
+            if (errors.length) {
+              sendJson(res, 400, { error: errors.join(" ") });
+              return;
+            }
+            const order = await store.createOrder(input);
             sendJson(res, 201, enrichOrderMetrics(order, clientsById, {}));
             return;
           }
