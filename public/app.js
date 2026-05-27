@@ -81,7 +81,7 @@ function paymentBadge(status) {
   if (status === "Paid") return `<span class="badge badge--delivered">${escapeHtml(status)}</span>`;
   if (status === "Partial") return `<span class="badge badge--progress">${escapeHtml(status)}</span>`;
   if (status === "Refunded") return `<span class="badge badge--overdue">${escapeHtml(status)}</span>`;
-  return `<span class="badge badge--overdue">${escapeHtml(status)}</span>`;
+  return `<span class="badge badge--unpaid">${escapeHtml(status)}</span>`;
 }
 
 function activityIcon(type) {

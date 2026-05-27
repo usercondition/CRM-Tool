@@ -12,6 +12,7 @@
   --danger: #f87171;
   --radius: 12px;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
   font-family: "DM Sans", system-ui, sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -226,6 +227,12 @@ textarea {
 
 .btn--ghost {
   background: transparent;
+  color: var(--text);
+}
+
+.btn--ghost:hover {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
 .btn--danger {
@@ -472,33 +479,39 @@ tr:hover td {
 }
 
 .badge--new {
-  background: rgba(110, 168, 254, 0.15);
-  color: #bfdbfe;
-  border-color: rgba(110, 168, 254, 0.25);
+  background: rgba(110, 168, 254, 0.22);
+  color: #dbeafe;
+  border-color: rgba(110, 168, 254, 0.4);
 }
 
 .badge--progress {
-  background: rgba(251, 191, 36, 0.15);
-  color: #fde68a;
-  border-color: rgba(251, 191, 36, 0.25);
+  background: rgba(251, 191, 36, 0.22);
+  color: #fef3c7;
+  border-color: rgba(251, 191, 36, 0.4);
 }
 
 .badge--shipped {
-  background: rgba(139, 92, 246, 0.15);
-  color: #ddd6fe;
-  border-color: rgba(139, 92, 246, 0.25);
+  background: rgba(139, 92, 246, 0.22);
+  color: #ede9fe;
+  border-color: rgba(139, 92, 246, 0.4);
 }
 
 .badge--delivered {
-  background: rgba(52, 211, 153, 0.15);
-  color: #a7f3d0;
-  border-color: rgba(52, 211, 153, 0.25);
+  background: rgba(52, 211, 153, 0.22);
+  color: #d1fae5;
+  border-color: rgba(52, 211, 153, 0.4);
 }
 
 .badge--overdue {
-  background: rgba(248, 113, 113, 0.15);
+  background: rgba(248, 113, 113, 0.22);
+  color: #fee2e2;
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.badge--unpaid {
+  background: rgba(248, 113, 113, 0.18);
   color: #fecaca;
-  border-color: rgba(248, 113, 113, 0.25);
+  border-color: rgba(248, 113, 113, 0.35);
 }
 
 .row-actions {
@@ -515,6 +528,10 @@ tr:hover td {
   line-height: 1;
   padding: 0.15rem 0.35rem;
   border-radius: 6px;
+}
+
+.modal .icon-btn {
+  color: var(--muted);
 }
 
 .icon-btn:hover {
@@ -580,6 +597,8 @@ tr:hover td {
   background: transparent;
   max-width: none;
   max-height: none;
+  color: var(--text);
+  color-scheme: dark;
 }
 
 .modal::backdrop {
@@ -594,6 +613,7 @@ tr:hover td {
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: var(--shadow);
+  color: var(--text);
 }
 
 .modal__header,
@@ -603,6 +623,8 @@ tr:hover td {
   align-items: center;
   padding: 1rem 1.1rem;
   border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
 }
 
 .modal__footer {
@@ -615,12 +637,44 @@ tr:hover td {
 .modal__header h2 {
   margin: 0;
   font-size: 1.1rem;
+  color: var(--text);
 }
 
 .modal__body {
   padding: 1rem 1.1rem 0.25rem;
   display: grid;
   gap: 0.85rem;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.modal__body strong,
+.modal__body p,
+.modal__body td,
+.modal__body .timeline__title {
+  color: var(--text);
+}
+
+.modal__body th {
+  color: var(--muted);
+}
+
+.modal__body .detail-label,
+.modal__body label {
+  color: var(--muted);
+}
+
+.modal__body input,
+.modal__body select,
+.modal__body textarea {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  color-scheme: dark;
+}
+
+.modal__body input::placeholder {
+  color: #6b7280;
 }
 
 .field label {
