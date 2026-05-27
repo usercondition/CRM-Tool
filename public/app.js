@@ -120,7 +120,8 @@ function prefixedName(prefix, name) {
 function buildClientPayloadFromForm(fd, prefix = "") {
   const get = (key) => fd.get(prefixedName(prefix, key)) || "";
   return {
-    name: String(get("name")).trim(),
+    firstName: String(get("firstName")).trim(),
+    lastName: String(get("lastName")).trim(),
     email: String(get("email")).trim(),
     phone: String(get("phone")).trim(),
     addressLine1: String(get("addressLine1")).trim(),
@@ -130,6 +131,30 @@ function buildClientPayloadFromForm(fd, prefix = "") {
     zip: String(get("zip")).trim(),
     notes: String(get("notes")).trim(),
   };
+}
+
+function clientNamesForForm(client) {
+  if (!client) return { firstName: "", lastName: "" };
+  if (client.firstName || client.lastName) {
+    return { firstName: client.firstName || "", lastName: client.lastName || "" };
+  }
+  const parts = String(client.name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return { firstName: "", lastName: "" };
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+
+function clientNameFieldsHtml(prefix = "", client = null) {
+  const names = clientNamesForForm(client);
+  const id = (key) => prefixedName(prefix, key);
+  const required = prefix === "newClient";
+  return `<div class="field-row">
+    ${field("firstName", "First name", names.firstName, "text", { required, name: id("firstName"), id: id("firstName") })}
+    ${field("lastName", "Last name", names.lastName, "text", { name: id("lastName"), id: id("lastName") })}
+  </div>`;
 }
 
 function parseFormDecimal(value, label = "Amount") {
@@ -1176,7 +1201,7 @@ function openClientModal(id = null) {
   const existing = id ? state.clients.find((c) => c.id === id) : null;
   const parts = clientAddressForForm(existing);
   const body = `
-    ${field("name", "Name", existing?.name || "", "text", { required: true })}
+    ${clientNameFieldsHtml("", existing)}
     <div class="field-row">
       ${field("email", "Email", existing?.email || "", "email")}
       ${field("phone", "Phone", existing?.phone || "")}
@@ -1186,7 +1211,7 @@ function openClientModal(id = null) {
   `;
   openModalForm(existing ? "Edit client" : "New client", body, async (fd) => {
     const payload = buildClientPayloadFromForm(fd, "");
-    if (!payload.name) throw new Error("Name is required.");
+    if (!payload.firstName && !payload.lastName) throw new Error("First or last name is required.");
     if (existing) {
       await api(`/api/clients/${existing.id}`, { method: "PUT", body: JSON.stringify(payload) });
       toast("Client updated");
@@ -1204,10 +1229,6 @@ function openOrderModal(id = null, presetClientId = null) {
   try {
     const existing = id ? state.orders.find((o) => o.id === id) : null;
     const isNew = !existing;
-    let nextNumbers = { orderId: "", invoiceNumber: "" };
-    if (isNew) {
-      nextNumbers = await api("/api/orders/next-numbers");
-    }
     const hasClients = state.clients.length > 0;
     const defaultMode = isNew && !hasClients ? "new" : "existing";
 
@@ -1246,7 +1267,7 @@ function openOrderModal(id = null, presetClientId = null) {
       </div>
     </div>
     <div id="new-client-fields" ${defaultMode === "new" ? "" : "hidden"}>
-      ${field("newClientName", "Client name", "", "text", { required: defaultMode === "new", name: "newClientName", id: "newClientName" })}
+      ${clientNameFieldsHtml("newClient", null)}
       <div class="field-row">
         ${field("newClientEmail", "Email", "", "email", { name: "newClientEmail", id: "newClientEmail" })}
         ${field("newClientPhone", "Phone", "", "text", { name: "newClientPhone", id: "newClientPhone" })}
@@ -1260,11 +1281,7 @@ function openOrderModal(id = null, presetClientId = null) {
           ${field("orderId", "Order ID", existing.orderId, "text", { required: true })}
           ${field("invoiceNumber", "Invoice #", existing.invoiceNumber || "")}
         </div>`
-      : `<div class="field-row">
-          ${field("orderId", "Order ID", nextNumbers.orderId, "text", { readonly: true })}
-          ${field("invoiceNumber", "Invoice #", nextNumbers.invoiceNumber, "text", { readonly: true })}
-        </div>
-        <p class="field-hint auto-number-note">Order and invoice numbers are assigned automatically when you save.</p>`;
+      : `<p class="field-hint auto-number-note">Order ID and invoice number are created automatically when you save.</p>`;
 
     const body = `
     ${numberFields}
@@ -1305,13 +1322,14 @@ function openOrderModal(id = null, presetClientId = null) {
 
       if (isNew && payload.clientMode === "new") {
         const clientPayload = buildClientPayloadFromForm(fd, "newClient");
-        if (!clientPayload.name) throw new Error("Client name is required.");
+        if (!clientPayload.firstName && !clientPayload.lastName) throw new Error("First or last name is required.");
         const client = await api("/api/clients", { method: "POST", body: JSON.stringify(clientPayload) });
         payload.clientId = client.id;
       }
 
       delete payload.clientMode;
-      delete payload.newClientName;
+      delete payload.newClientFirstName;
+      delete payload.newClientLastName;
       delete payload.newClientEmail;
       delete payload.newClientPhone;
       delete payload.newClientAddressLine1;
@@ -1356,7 +1374,7 @@ function wireNewClientToggle(initialMode) {
   const existingBlock = $("#existing-client-fields");
   const newBlock = $("#new-client-fields");
   const clientSelect = $("#clientId");
-  const nameInput = $("#newClientName");
+  const firstNameInput = $("#newClientFirstName");
   if (!existingBlock || !newBlock) return;
 
   function applyMode(mode) {
@@ -1364,7 +1382,7 @@ function wireNewClientToggle(initialMode) {
     existingBlock.hidden = isNew;
     newBlock.hidden = !isNew;
     if (clientSelect) clientSelect.required = !isNew;
-    if (nameInput) nameInput.required = isNew;
+    if (firstNameInput) firstNameInput.required = isNew;
     if (isNew) wireAddressAutocomplete("newClient");
   }
 

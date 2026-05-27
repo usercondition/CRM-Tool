@@ -21,6 +21,7 @@ const {
   parseDecimal,
 } = require("./lib/helpers");
 const { normalizeAddressParts, formatAddress, fetchAddressSuggestions, US_STATES } = require("./lib/address");
+const { normalizeClientNames } = require("./lib/names");
 const {
   STALE_DAYS,
   ORDER_TAG_PRESETS,
@@ -108,12 +109,13 @@ async function buildDashboard(store) {
 
 function normalizeClientInput(body, existing = null) {
   const parts = normalizeAddressParts(body, existing);
+  const names = normalizeClientNames(body, existing);
   const address =
     body.address !== undefined
       ? String(body.address).trim() || formatAddress(parts)
       : formatAddress(parts) || (existing ? existing.address : "");
   return {
-    name: body.name !== undefined ? String(body.name).trim() : existing.name,
+    ...names,
     email: body.email !== undefined ? String(body.email).trim() : existing.email,
     phone: body.phone !== undefined ? String(body.phone).trim() : existing.phone,
     address,
@@ -333,6 +335,8 @@ async function startServer() {
           const orders = await store.listOrders();
           const rows = clients.map((c) => enrichClient(c, orders));
           const csv = toCsv(rows, [
+            { header: "First name", key: "firstName" },
+            { header: "Last name", key: "lastName" },
             { header: "Name", key: "name" },
             { header: "Email", key: "email" },
             { header: "Phone", key: "phone" },
