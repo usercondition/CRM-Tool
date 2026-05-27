@@ -14,12 +14,21 @@ const {
 const {
   ORDER_STATUSES,
   PAYMENT_STATUSES,
-  enrichOrder,
   enrichClient,
   validateClient,
   validateOrder,
   toCsv,
 } = require("./lib/helpers");
+const {
+  STALE_DAYS,
+  ORDER_TAG_PRESETS,
+  tagsToString,
+  enrichOrderMetrics,
+  enrichClientHealth,
+  buildDashboardAnalytics,
+  searchAll,
+} = require("./lib/analytics");
+const { sendDigestEmail, buildDigestText, smtpConfigured } = require("./lib/digest");
 const { nextStatus } = require("./lib/activity");
 
 const PORT = Number(process.env.PORT || 3847);
@@ -73,43 +82,25 @@ function serveStatic(req, res, filePath, contentType) {
   });
 }
 
-async function buildDashboard(store) {
-  const clients = await store.listClients();
+async function loadEnrichedData(store, activityLimit = 500) {
+  const clientsRaw = await store.listClients();
   const ordersRaw = await store.listOrders();
-  const clientsById = Object.fromEntries(clients.map((c) => [c.id, c]));
-  const orders = ordersRaw.map((o) => enrichOrder(o, clientsById));
-  const openOrders = orders.filter((o) => o.isOpen);
-  const overdue = openOrders.filter((o) => o.daysOverdue > 0);
-  const unpaidOpen = openOrders.filter((o) => o.paymentStatus === "Unpaid" || o.paymentStatus === "Partial");
-  const byStatus = ORDER_STATUSES.reduce((acc, s) => {
-    acc[s] = orders.filter((o) => o.status === s).length;
-    return acc;
-  }, {});
-  const ordersById = Object.fromEntries(orders.map((o) => [o.id, o]));
-  const recentActivityRaw = await store.listRecentActivity(12);
-  const recentActivity = recentActivityRaw.map((a) => ({
-    ...a,
-    orderLabel: ordersById[a.orderId]?.orderId || a.orderId,
-    clientName: ordersById[a.orderId]?.clientName || "",
-  }));
-  return {
-    totalClients: clients.length,
-    totalOrders: orders.length,
-    openOrders: openOrders.length,
-    overdueOrders: overdue.length,
-    unpaidOrders: unpaidOpen.length,
-    openValue: openOrders.reduce((sum, o) => sum + (Number(o.totalCost) || 0), 0),
-    unpaidValue: unpaidOpen.reduce((sum, o) => sum + (Number(o.totalCost) || 0), 0),
-    byStatus,
-    recentOrders: [...orders]
-      .sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || ""))
-      .slice(0, 5),
-    needsAttention: {
-      overdue: [...overdue].sort((a, b) => b.daysOverdue - a.daysOverdue).slice(0, 8),
-      unpaid: [...unpaidOpen].sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || "")).slice(0, 8),
-    },
-    recentActivity,
-  };
+  const activity = await store.listRecentActivity(activityLimit);
+  const clientsById = Object.fromEntries(clientsRaw.map((c) => [c.id, c]));
+  const lastActivityByOrder = {};
+  for (const a of activity) {
+    if (!lastActivityByOrder[a.orderId] || a.createdAt > lastActivityByOrder[a.orderId]) {
+      lastActivityByOrder[a.orderId] = a.createdAt;
+    }
+  }
+  const orders = ordersRaw.map((o) => enrichOrderMetrics(o, clientsById, lastActivityByOrder));
+  const clients = clientsRaw.map((c) => enrichClientHealth(c, orders, lastActivityByOrder));
+  return { clients, orders, activity, clientsById, lastActivityByOrder };
+}
+
+async function buildDashboard(store) {
+  const { clients, orders, activity } = await loadEnrichedData(store);
+  return buildDashboardAnalytics(clients, orders, activity);
 }
 
 function normalizeClientInput(body, existing = null) {
@@ -123,6 +114,12 @@ function normalizeClientInput(body, existing = null) {
 }
 
 function normalizeOrderInput(body, existing = null) {
+  const tags =
+    body.tags !== undefined
+      ? tagsToString(body.tags)
+      : existing
+        ? tagsToString(existing.tags)
+        : "";
   return {
     orderId: body.orderId !== undefined ? String(body.orderId).trim() : existing.orderId,
     clientId: body.clientId !== undefined ? body.clientId : existing.clientId,
@@ -134,6 +131,10 @@ function normalizeOrderInput(body, existing = null) {
     paymentStatus: body.paymentStatus !== undefined ? body.paymentStatus : existing.paymentStatus,
     dueDate: body.dueDate !== undefined ? body.dueDate : existing.dueDate,
     notes: body.notes !== undefined ? String(body.notes).trim() : existing.notes,
+    tags,
+    invoiceNumber:
+      body.invoiceNumber !== undefined ? String(body.invoiceNumber).trim() : existing?.invoiceNumber || "",
+    poNumber: body.poNumber !== undefined ? String(body.poNumber).trim() : existing?.poNumber || "",
   };
 }
 
@@ -152,7 +153,9 @@ async function startServer() {
     const staticMap = {
       "/styles.css": "text/css; charset=utf-8",
       "/app.js": "application/javascript; charset=utf-8",
+      "/sw.js": "application/javascript; charset=utf-8",
       "/manifest.webmanifest": "application/manifest+json; charset=utf-8",
+      "/icon.svg": "image/svg+xml",
     };
     if (req.method === "GET" && staticMap[pathname]) {
       serveStatic(req, res, path.join(ROOT, "public", pathname.slice(1)), staticMap[pathname]);
@@ -200,14 +203,83 @@ async function startServer() {
           sendJson(res, 200, {
             orderStatuses: ORDER_STATUSES,
             paymentStatuses: PAYMENT_STATUSES,
+            orderTagPresets: ORDER_TAG_PRESETS,
+            staleOrderDays: STALE_DAYS,
             authRequired: isAuthEnabled(),
             storage: store.mode,
+            digestEmailConfigured: Boolean(process.env.CRM_DIGEST_EMAIL),
+            smtpConfigured: smtpConfigured(),
           });
           return;
         }
 
         if (pathname === "/api/dashboard" && req.method === "GET") {
           sendJson(res, 200, await buildDashboard(store));
+          return;
+        }
+
+        if (pathname === "/api/search" && req.method === "GET") {
+          const q = url.searchParams.get("q") || "";
+          const { clients, orders } = await loadEnrichedData(store);
+          sendJson(res, 200, searchAll(clients, orders, q));
+          return;
+        }
+
+        if (pathname === "/api/settings" && req.method === "GET") {
+          sendJson(res, 200, await store.getSettings());
+          return;
+        }
+
+        if (pathname === "/api/settings" && req.method === "PUT") {
+          const body = await readBody(req);
+          const partial = {};
+          if (body?.digestEmail !== undefined) partial.digestEmail = String(body.digestEmail).trim();
+          sendJson(res, 200, await store.saveSettings(partial));
+          return;
+        }
+
+        if (pathname === "/api/saved-views" && req.method === "GET") {
+          sendJson(res, 200, await store.listSavedViews());
+          return;
+        }
+
+        if (pathname === "/api/saved-views" && req.method === "POST") {
+          const body = await readBody(req);
+          if (!String(body?.name || "").trim()) {
+            sendJson(res, 400, { error: "View name is required." });
+            return;
+          }
+          const view = await store.addSavedView(body);
+          sendJson(res, 201, view);
+          return;
+        }
+
+        const savedViewMatch = pathname.match(/^\/api\/saved-views\/([^/]+)$/);
+        if (savedViewMatch && req.method === "DELETE") {
+          const ok = await store.deleteSavedView(savedViewMatch[1]);
+          if (!ok) {
+            sendJson(res, 404, { error: "Saved view not found." });
+            return;
+          }
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+
+        if (pathname === "/api/digest/preview" && req.method === "GET") {
+          const analytics = await buildDashboard(store);
+          sendText(res, 200, buildDigestText(analytics), "text/plain; charset=utf-8");
+          return;
+        }
+
+        if (pathname === "/api/digest/send" && req.method === "POST") {
+          const body = await readBody(req);
+          const analytics = await buildDashboard(store);
+          const result = await sendDigestEmail(analytics, body?.to);
+          if (!result.ok) {
+            sendJson(res, result.preview ? 503 : 400, result);
+            return;
+          }
+          sendJson(res, 200, result);
           return;
         }
 
@@ -232,11 +304,8 @@ async function startServer() {
         }
 
         if (pathname === "/api/export/orders.csv" && req.method === "GET") {
-          const clients = await store.listClients();
-          const ordersRaw = await store.listOrders();
-          const clientsById = Object.fromEntries(clients.map((c) => [c.id, c]));
-          const rows = ordersRaw.map((o) => enrichOrder(o, clientsById));
-          const csv = toCsv(rows, [
+          const { orders } = await loadEnrichedData(store);
+          const csv = toCsv(orders, [
             { header: "Order ID", key: "orderId" },
             { header: "Client", key: "clientName" },
             { header: "Date received", key: "dateReceived" },
@@ -246,6 +315,9 @@ async function startServer() {
             { header: "Quantity", key: "quantity" },
             { header: "Total cost", key: "totalCost" },
             { header: "Days overdue", key: "daysOverdue" },
+            { header: "Tags", key: "tagsLabel" },
+            { header: "Invoice #", key: "invoiceNumber" },
+            { header: "PO #", key: "poNumber" },
             { header: "Items", key: "items" },
             { header: "Notes", key: "notes" },
           ]);
@@ -257,11 +329,9 @@ async function startServer() {
 
         if (pathname === "/api/clients") {
           if (req.method === "GET") {
-            const clients = await store.listClients();
-            const orders = await store.listOrders();
-            const enriched = clients.map((c) => enrichClient(c, orders));
-            enriched.sort((a, b) => a.name.localeCompare(b.name));
-            sendJson(res, 200, enriched);
+            const { clients } = await loadEnrichedData(store);
+            clients.sort((a, b) => a.name.localeCompare(b.name));
+            sendJson(res, 200, clients);
             return;
           }
 
@@ -282,25 +352,22 @@ async function startServer() {
         const clientMatch = pathname.match(/^\/api\/clients\/([^/]+)$/);
         if (clientMatch) {
           const id = clientMatch[1];
-          const orders = await store.listOrders();
 
           if (req.method === "GET") {
-            const client = await store.getClient(id);
+            const { clients, orders, clientsById, lastActivityByOrder } = await loadEnrichedData(store);
+            const client = clients.find((c) => c.id === id) || null;
             if (!client) {
               sendJson(res, 404, { error: "Client not found." });
               return;
             }
-            const enriched = enrichClient(client, orders);
-            const clientsById = Object.fromEntries((await store.listClients()).map((c) => [c.id, c]));
             const clientOrders = orders
               .filter((o) => o.clientId === id)
-              .map((o) => enrichOrder(o, clientsById))
               .sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || ""));
             if (url.searchParams.get("detail") === "1") {
-              sendJson(res, 200, { ...enriched, orders: clientOrders });
+              sendJson(res, 200, { ...client, orders: clientOrders });
               return;
             }
-            sendJson(res, 200, enriched);
+            sendJson(res, 200, client);
             return;
           }
 
@@ -317,6 +384,7 @@ async function startServer() {
               return;
             }
             const updated = await store.updateClient(id, normalizeClientInput(body, existing));
+            const orders = await store.listOrders();
             sendJson(res, 200, enrichClient(updated, orders));
             return;
           }
@@ -333,25 +401,26 @@ async function startServer() {
         }
 
         if (pathname === "/api/orders") {
-          const clients = await store.listClients();
-          const clientsById = Object.fromEntries(clients.map((c) => [c.id, c]));
-
           if (req.method === "GET") {
-            let orders = (await store.listOrders()).map((o) => enrichOrder(o, clientsById));
+            const { orders } = await loadEnrichedData(store);
+            let filtered = orders;
             const clientId = url.searchParams.get("clientId");
             const status = url.searchParams.get("status");
             const attention = url.searchParams.get("attention");
-            if (clientId) orders = orders.filter((o) => o.clientId === clientId);
-            if (status) orders = orders.filter((o) => o.status === status);
-            if (attention === "overdue") orders = orders.filter((o) => o.isOpen && o.daysOverdue > 0);
+            const tag = url.searchParams.get("tag");
+            if (clientId) filtered = filtered.filter((o) => o.clientId === clientId);
+            if (status) filtered = filtered.filter((o) => o.status === status);
+            if (tag) filtered = filtered.filter((o) => (o.tags || []).includes(tag.toLowerCase()));
+            if (attention === "overdue") filtered = filtered.filter((o) => o.isOpen && o.daysOverdue > 0);
             if (attention === "unpaid") {
-              orders = orders.filter(
+              filtered = filtered.filter(
                 (o) => o.isOpen && (o.paymentStatus === "Unpaid" || o.paymentStatus === "Partial")
               );
             }
-            if (attention === "open") orders = orders.filter((o) => o.isOpen);
-            orders.sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || ""));
-            sendJson(res, 200, orders);
+            if (attention === "open") filtered = filtered.filter((o) => o.isOpen);
+            if (attention === "stale") filtered = filtered.filter((o) => o.isStale);
+            filtered.sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || ""));
+            sendJson(res, 200, filtered);
             return;
           }
 
@@ -362,12 +431,13 @@ async function startServer() {
               sendJson(res, 400, { error: errors.join(" ") });
               return;
             }
+            const clientsById = Object.fromEntries((await store.listClients()).map((c) => [c.id, c]));
             if (!clientsById[body.clientId]) {
               sendJson(res, 400, { error: "Client not found." });
               return;
             }
             const order = await store.createOrder(normalizeOrderInput(body));
-            sendJson(res, 201, enrichOrder(order, clientsById));
+            sendJson(res, 201, enrichOrderMetrics(order, clientsById, {}));
             return;
           }
         }
@@ -433,18 +503,15 @@ async function startServer() {
             sendJson(res, 400, { error: "No changes requested." });
             return;
           }
-          const clients = await store.listClients();
-          const clientsById = Object.fromEntries(clients.map((c) => [c.id, c]));
+          const { clientsById, lastActivityByOrder } = await loadEnrichedData(store);
           const updated = await store.updateOrder(id, patch);
-          sendJson(res, 200, enrichOrder(updated, clientsById));
+          sendJson(res, 200, enrichOrderMetrics(updated, clientsById, lastActivityByOrder));
           return;
         }
 
         const orderMatch = pathname.match(/^\/api\/orders\/([^/]+)$/);
         if (orderMatch) {
           const id = orderMatch[1];
-          const clients = await store.listClients();
-          const clientsById = Object.fromEntries(clients.map((c) => [c.id, c]));
 
           if (req.method === "GET") {
             const order = await store.getOrder(id);
@@ -452,7 +519,8 @@ async function startServer() {
               sendJson(res, 404, { error: "Order not found." });
               return;
             }
-            sendJson(res, 200, enrichOrder(order, clientsById));
+            const { clientsById, lastActivityByOrder } = await loadEnrichedData(store);
+            sendJson(res, 200, enrichOrderMetrics(order, clientsById, lastActivityByOrder));
             return;
           }
 
@@ -468,12 +536,13 @@ async function startServer() {
               sendJson(res, 400, { error: errors.join(" ") });
               return;
             }
+            const clientsById = Object.fromEntries((await store.listClients()).map((c) => [c.id, c]));
             if (body.clientId && !clientsById[body.clientId]) {
               sendJson(res, 400, { error: "Client not found." });
               return;
             }
             const updated = await store.updateOrder(id, normalizeOrderInput(body, existing));
-            sendJson(res, 200, enrichOrder(updated, clientsById));
+            sendJson(res, 200, enrichOrderMetrics(updated, clientsById, {}));
             return;
           }
 

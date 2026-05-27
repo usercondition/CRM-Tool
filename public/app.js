@@ -5,7 +5,11 @@ const state = {
   clients: [],
   orders: [],
   dashboard: null,
-  orderFilter: { q: "", status: "", clientId: "", attention: "" },
+  settings: null,
+  savedViews: [],
+  activeSavedViewId: "",
+  orderFilter: { q: "", status: "", clientId: "", attention: "", tag: "" },
+  searchTimer: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -107,6 +111,37 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+function tagBadges(tags) {
+  if (!tags?.length) return "";
+  return tags.map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("");
+}
+
+function miniBarChart(data, valueKey = "value", maxBars = 30) {
+  if (!data?.length) return `<div class="empty">No data yet</div>`;
+  const slice = data.slice(-maxBars);
+  const max = Math.max(...slice.map((d) => Number(d[valueKey]) || 0), 1);
+  return `<div class="mini-chart">${slice
+    .map(
+      (d) =>
+        `<div class="mini-chart__bar" style="--h:${Math.max(4, Math.round(((Number(d[valueKey]) || 0) / max) * 100))}%" title="${escapeHtml(d.date)}: ${money(d[valueKey])}"></div>`
+    )
+    .join("")}</div>`;
+}
+
+function pipelineBars(pipelineCount, pipelineValue) {
+  const statuses = state.meta?.orderStatuses || ["New", "In Progress", "Shipped", "Delivered"];
+  const maxVal = Math.max(...statuses.map((s) => Number(pipelineValue[s]) || 0), 1);
+  return statuses
+    .map(
+      (s) => `<div class="pipeline-row">
+        <span class="pipeline-row__label">${escapeHtml(s)}</span>
+        <div class="pipeline-row__bar"><span style="width:${Math.round(((Number(pipelineValue[s]) || 0) / maxVal) * 100)}%"></span></div>
+        <span class="pipeline-row__meta">${pipelineCount[s] || 0} · ${money(pipelineValue[s] || 0)}</span>
+      </div>`
+    )
+    .join("");
+}
+
 function toast(msg) {
   const el = $("#toast");
   el.textContent = msg;
@@ -123,9 +158,10 @@ function setView(view) {
   $$(".view").forEach((section) => {
     section.hidden = section.id !== `view-${view}`;
   });
+  $("#saved-views-nav").hidden = view !== "orders";
 
   const titles = {
-    dashboard: ["Dashboard", "Overview of clients and open work"],
+    dashboard: ["Dashboard", "At-a-glance pipeline, payments, and follow-ups"],
     orders: ["Orders", "Track status, due dates, and payments"],
     clients: ["Clients", "Contact directory and open order counts"],
   };
@@ -133,11 +169,32 @@ function setView(view) {
   $("#page-title").textContent = title;
   $("#page-subtitle").textContent = subtitle;
   renderTopbarActions();
+  renderSavedViewsNav();
   renderCurrentView();
 }
 
 function renderTopbarActions() {
   const actions = $("#topbar-actions");
+  if (state.view === "dashboard") {
+    actions.innerHTML = `
+      <button type="button" class="btn" id="digest-preview-btn">Digest preview</button>
+      <button type="button" class="btn btn--primary" id="add-order-dash-btn">+ New order</button>`;
+    $("#add-order-dash-btn").onclick = () => openOrderModal();
+    $("#digest-preview-btn").onclick = async () => {
+      try {
+        const res = await fetch("/api/digest/preview", { credentials: "include" });
+        const text = await res.text();
+        openModal("Daily digest preview", `<pre class="digest-preview">${escapeHtml(text)}</pre>`, null, {
+          wide: true,
+          hideSave: true,
+        });
+        $("#modal-cancel").textContent = "Close";
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+    return;
+  }
   if (state.view === "orders") {
     actions.innerHTML = `
       <button type="button" class="btn" id="export-orders-btn">Export CSV</button>
@@ -166,19 +223,24 @@ function downloadExport(url, filename) {
 }
 
 async function loadAll() {
-  const [auth, meta, clients, orders, dashboard] = await Promise.all([
+  const [auth, meta, clients, orders, dashboard, settings, savedViews] = await Promise.all([
     api("/api/auth/status"),
     api("/api/meta"),
     api("/api/clients"),
     api("/api/orders"),
     api("/api/dashboard"),
+    api("/api/settings"),
+    api("/api/saved-views"),
   ]);
   state.auth = auth;
   state.meta = meta;
   state.clients = clients;
   state.orders = orders;
   state.dashboard = dashboard;
+  state.settings = settings;
+  state.savedViews = savedViews;
   updateChrome();
+  maybeNotifyOverdue();
 }
 
 function renderCurrentView() {
@@ -190,6 +252,9 @@ function renderCurrentView() {
 function renderDashboard() {
   const d = state.dashboard;
   if (!d) return;
+
+  const strip = d.todayStrip || {};
+  const pay = d.paymentSnapshot || {};
 
   const overdueRows =
     d.needsAttention?.overdue?.length > 0
@@ -205,6 +270,20 @@ function renderDashboard() {
           .join("")
       : `<tr><td colspan="4" class="empty">No overdue orders</td></tr>`;
 
+  const staleRows =
+    d.stale?.length > 0
+      ? d.stale
+          .map(
+            (o) => `<tr data-order-id="${o.id}">
+              <td><strong>${escapeHtml(o.orderId)}</strong></td>
+              <td>${escapeHtml(o.clientName)}</td>
+              <td><span class="badge badge--progress">${o.daysSinceUpdate}d idle</span></td>
+              <td>${statusBadge(o.status)}</td>
+            </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="4" class="empty">No stale orders</td></tr>`;
+
   const unpaidRows =
     d.needsAttention?.unpaid?.length > 0
       ? d.needsAttention.unpaid
@@ -218,6 +297,28 @@ function renderDashboard() {
           )
           .join("")
       : `<tr><td colspan="4" class="empty">All open orders are paid</td></tr>`;
+
+  const healthRows =
+    d.clientHealth?.length > 0
+      ? d.clientHealth
+          .map(
+            (c) => `<tr data-client-id="${c.id}">
+              <td><strong>${escapeHtml(c.name)}</strong></td>
+              <td>${(c.healthFlags || []).map((f) => `<span class="tag">${escapeHtml(f)}</span>`).join(" ")}</td>
+              <td class="money">${money(c.totalOpenValue)}</td>
+            </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="3" class="empty">All clients look healthy</td></tr>`;
+
+  const calendarCells = (d.calendarDays || [])
+    .map(
+      (day) => `<div class="cal-day ${day.count ? "cal-day--busy" : ""}" data-cal-date="${day.date}" title="${day.count} due">
+        <span class="cal-day__label">${escapeHtml(day.label.split(",")[0] || day.label)}</span>
+        <strong>${day.count || "—"}</strong>
+      </div>`
+    )
+    .join("");
 
   const activityItems =
     d.recentActivity?.length > 0
@@ -235,32 +336,68 @@ function renderDashboard() {
       : `<li class="timeline__item timeline__item--empty">Activity will appear as you update orders.</li>`;
 
   $("#view-dashboard").innerHTML = `
+    <div class="quick-actions">
+      <button type="button" class="chip" data-dash-action="overdue">Overdue (${d.overdueOrders})</button>
+      <button type="button" class="chip" data-dash-action="unpaid">Unpaid (${d.unpaidOrders})</button>
+      <button type="button" class="chip" data-dash-action="stale">Stale (${d.staleOrders || 0})</button>
+      <button type="button" class="chip" data-dash-action="open">All open (${d.openOrders})</button>
+    </div>
+    <div class="today-strip">
+      <div class="today-strip__item"><span>Due today</span><strong>${strip.dueToday || 0}</strong><small>${money(strip.dueTodayValue || 0)}</small></div>
+      <div class="today-strip__item"><span>Due this week</span><strong>${strip.dueThisWeek || 0}</strong></div>
+      <div class="today-strip__item"><span>Received this week</span><strong>${strip.receivedThisWeek || 0}</strong></div>
+      <div class="today-strip__item"><span>Shipped this week</span><strong>${strip.shippedThisWeek || 0}</strong></div>
+      ${d.avgDaysToDeliver != null ? `<div class="today-strip__item"><span>Avg days to deliver</span><strong>${d.avgDaysToDeliver}</strong></div>` : ""}
+    </div>
     <div class="stats">
       <div class="stat"><div class="stat__label">Clients</div><div class="stat__value">${d.totalClients}</div></div>
       <div class="stat"><div class="stat__label">Open orders</div><div class="stat__value">${d.openOrders}</div></div>
       <div class="stat stat--warn"><div class="stat__label">Overdue</div><div class="stat__value">${d.overdueOrders}</div></div>
       <div class="stat stat--warn"><div class="stat__label">Unpaid (open)</div><div class="stat__value">${d.unpaidOrders}</div></div>
       <div class="stat"><div class="stat__label">Open value</div><div class="stat__value money">${money(d.openValue)}</div></div>
-      <div class="stat"><div class="stat__label">Unpaid value</div><div class="stat__value money">${money(d.unpaidValue || 0)}</div></div>
+      <div class="stat"><div class="stat__label">Outstanding</div><div class="stat__value money">${money(d.unpaidValue || 0)}</div></div>
     </div>
-    <div class="grid-2">
+    <div class="grid-3">
       <div class="panel">
-        <div class="panel__header"><h2>Needs attention — overdue</h2></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Order</th><th>Client</th><th>Late</th><th>Total</th></tr></thead>
-            <tbody>${overdueRows}</tbody>
-          </table>
-        </div>
+        <div class="panel__header"><h2>Pipeline value</h2></div>
+        <div class="pipeline">${pipelineBars(d.pipelineCount || {}, d.pipelineValue || {})}</div>
       </div>
       <div class="panel">
-        <div class="panel__header"><h2>Needs attention — unpaid</h2></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Order</th><th>Client</th><th>Payment</th><th>Total</th></tr></thead>
-            <tbody>${unpaidRows}</tbody>
-          </table>
-        </div>
+        <div class="panel__header"><h2>Payment snapshot</h2></div>
+        <ul class="snapshot-list">
+          <li><span>Unpaid</span><strong>${pay.unpaid?.count || 0} · ${money(pay.unpaid?.value || 0)}</strong></li>
+          <li><span>Partial</span><strong>${pay.partial?.count || 0} · ${money(pay.partial?.value || 0)}</strong></li>
+          <li><span>Paid (open)</span><strong>${pay.paidOpen?.count || 0} · ${money(pay.paidOpen?.value || 0)}</strong></li>
+          <li><span>Paid this month</span><strong>${pay.paidThisMonth?.count || 0} · ${money(pay.paidThisMonth?.value || 0)}</strong></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2>Revenue (90 days)</h2></div>
+        ${miniBarChart(d.revenueChart)}
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1rem;">
+      <div class="panel__header"><h2>Due dates — next 14 days</h2></div>
+      <div class="cal-strip">${calendarCells}</div>
+    </div>
+    <div class="grid-2" style="margin-top:1rem;">
+      <div class="panel">
+        <div class="panel__header"><h2>Overdue</h2></div>
+        <div class="table-wrap"><table><thead><tr><th>Order</th><th>Client</th><th>Late</th><th>Total</th></tr></thead><tbody>${overdueRows}</tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2>Unpaid</h2></div>
+        <div class="table-wrap"><table><thead><tr><th>Order</th><th>Client</th><th>Payment</th><th>Total</th></tr></thead><tbody>${unpaidRows}</tbody></table></div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:1rem;">
+      <div class="panel">
+        <div class="panel__header"><h2>Stale orders</h2></div>
+        <div class="table-wrap"><table><thead><tr><th>Order</th><th>Client</th><th>Idle</th><th>Status</th></tr></thead><tbody>${staleRows}</tbody></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2>Client health</h2></div>
+        <div class="table-wrap"><table><thead><tr><th>Client</th><th>Flags</th><th>Open value</th></tr></thead><tbody>${healthRows}</tbody></table></div>
       </div>
     </div>
     <div class="grid-2" style="margin-top:1rem;">
@@ -270,10 +407,10 @@ function renderDashboard() {
           <table>
             <thead><tr><th>Order</th><th>Client</th><th>Status</th><th>Due</th><th>Total</th></tr></thead>
             <tbody>
-              ${d.recentOrders
+              ${(d.recentOrders || [])
                 .map(
                   (o) => `<tr data-order-id="${o.id}">
-                    <td><strong>${escapeHtml(o.orderId)}</strong></td>
+                    <td><strong>${escapeHtml(o.orderId)}</strong>${tagBadges(o.tags)}</td>
                     <td>${escapeHtml(o.clientName)}</td>
                     <td>${statusBadge(o.status)}</td>
                     <td>${formatDate(o.dueDate)}${o.daysOverdue ? ` <span class="badge badge--overdue">${o.daysOverdue}d late</span>` : ""}</td>
@@ -296,6 +433,75 @@ function renderDashboard() {
     el.style.cursor = "pointer";
     el.onclick = () => openOrderDetail(el.dataset.orderId);
   });
+  $$("#view-dashboard [data-client-id]").forEach((el) => {
+    el.style.cursor = "pointer";
+    el.onclick = () => openClientDetail(el.dataset.clientId);
+  });
+  $$("[data-dash-action]").forEach((btn) => {
+    btn.onclick = () => {
+      state.orderFilter = { q: "", status: "", clientId: "", attention: btn.dataset.dashAction, tag: "" };
+      state.activeSavedViewId = "";
+      setView("orders");
+    };
+  });
+}
+
+function renderSavedViewsNav() {
+  const list = $("#saved-views-list");
+  if (!list) return;
+  if (!state.savedViews.length) {
+    list.innerHTML = `<p class="saved-views__empty">Save filters from the Orders view.</p>`;
+    return;
+  }
+  list.innerHTML = state.savedViews
+    .map(
+      (v) => `<button type="button" class="saved-view${state.activeSavedViewId === v.id ? " is-active" : ""}" data-saved-view="${v.id}">
+        <span>${escapeHtml(v.name)}</span>
+        <span class="saved-view__delete" data-delete-view="${v.id}" title="Delete">×</span>
+      </button>`
+    )
+    .join("");
+  $$("[data-saved-view]").forEach((btn) => {
+    btn.onclick = (e) => {
+      if (e.target.closest("[data-delete-view]")) return;
+      applySavedView(btn.dataset.savedView);
+    };
+  });
+  $$("[data-delete-view]").forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm("Delete this saved view?")) return;
+      await api(`/api/saved-views/${btn.dataset.deleteView}`, { method: "DELETE" });
+      if (state.activeSavedViewId === btn.dataset.deleteView) state.activeSavedViewId = "";
+      await refresh();
+      toast("Saved view deleted");
+    };
+  });
+}
+
+function applySavedView(id) {
+  const view = state.savedViews.find((v) => v.id === id);
+  if (!view) return;
+  state.activeSavedViewId = id;
+  state.orderFilter = {
+    q: view.filters?.q || "",
+    status: view.filters?.status || "",
+    clientId: view.filters?.clientId || "",
+    attention: view.filters?.attention || "",
+    tag: view.filters?.tag || "",
+  };
+  setView("orders");
+}
+
+async function saveCurrentView() {
+  const name = prompt("Name this view (e.g. Overdue rush jobs):");
+  if (!name?.trim()) return;
+  await api("/api/saved-views", {
+    method: "POST",
+    body: JSON.stringify({ name: name.trim(), filters: { ...state.orderFilter } }),
+  });
+  await refresh();
+  toast("View saved");
 }
 
 function filteredOrders() {
@@ -303,6 +509,7 @@ function filteredOrders() {
   return state.orders.filter((o) => {
     if (state.orderFilter.status && o.status !== state.orderFilter.status) return false;
     if (state.orderFilter.clientId && o.clientId !== state.orderFilter.clientId) return false;
+    if (state.orderFilter.tag && !(o.tags || []).includes(state.orderFilter.tag)) return false;
     if (state.orderFilter.attention === "overdue" && !(o.isOpen && o.daysOverdue > 0)) return false;
     if (
       state.orderFilter.attention === "unpaid" &&
@@ -310,8 +517,11 @@ function filteredOrders() {
     )
       return false;
     if (state.orderFilter.attention === "open" && !o.isOpen) return false;
+    if (state.orderFilter.attention === "stale" && !o.isStale) return false;
     if (!q) return true;
-    const hay = [o.orderId, o.clientName, o.items, o.notes].join(" ").toLowerCase();
+    const hay = [o.orderId, o.clientName, o.items, o.notes, o.invoiceNumber, o.poNumber, o.tagsLabel, ...(o.tags || [])]
+      .join(" ")
+      .toLowerCase();
     return hay.includes(q);
   });
 }
@@ -360,6 +570,7 @@ function renderOrders() {
       ${attentionChip("open", "Open")}
       ${attentionChip("overdue", "Overdue")}
       ${attentionChip("unpaid", "Unpaid")}
+      ${attentionChip("stale", "Stale")}
     </div>
     <div class="kanban">${kanbanCols}</div>
     <div class="panel">
@@ -377,7 +588,7 @@ function renderOrders() {
                 ? orders
                     .map(
                       (o) => `<tr>
-                        <td><strong>${escapeHtml(o.orderId)}</strong><div style="color:var(--muted);font-size:0.82rem;">${escapeHtml(o.items || "")}</div></td>
+                        <td><strong>${escapeHtml(o.orderId)}</strong><div style="color:var(--muted);font-size:0.82rem;">${escapeHtml(o.items || "")}</div>${tagBadges(o.tags)}</td>
                         <td>${escapeHtml(o.clientName)}</td>
                         <td>${formatDate(o.dateReceived)}</td>
                         <td>${formatDate(o.dueDate)}${o.daysOverdue ? `<div><span class="badge badge--overdue">${o.daysOverdue}d late</span></div>` : ""}</td>
@@ -402,20 +613,28 @@ function renderOrders() {
 
   $("#order-search").oninput = (e) => {
     state.orderFilter.q = e.target.value;
+    state.activeSavedViewId = "";
     renderOrders();
+    renderSavedViewsNav();
   };
   $("#order-status-filter").onchange = (e) => {
     state.orderFilter.status = e.target.value;
+    state.activeSavedViewId = "";
     renderOrders();
+    renderSavedViewsNav();
   };
   $("#order-client-filter").onchange = (e) => {
     state.orderFilter.clientId = e.target.value;
+    state.activeSavedViewId = "";
     renderOrders();
+    renderSavedViewsNav();
   };
   $$(".chip[data-attention]").forEach((chip) => {
     chip.onclick = () => {
       state.orderFilter.attention = chip.dataset.attention;
+      state.activeSavedViewId = "";
       renderOrders();
+      renderSavedViewsNav();
     };
   });
 }
@@ -583,7 +802,10 @@ async function openOrderDetail(id) {
       <div><span class="detail-label">Total</span><strong class="money">${money(order.totalCost)}</strong></div>
       <div><span class="detail-label">Received</span>${formatDate(order.dateReceived)}</div>
       <div><span class="detail-label">Due</span>${formatDate(order.dueDate)}${order.daysOverdue ? ` <span class="badge badge--overdue">${order.daysOverdue}d late</span>` : ""}</div>
+      ${order.invoiceNumber ? `<div><span class="detail-label">Invoice #</span>${escapeHtml(order.invoiceNumber)}</div>` : ""}
+      ${order.poNumber ? `<div><span class="detail-label">PO #</span>${escapeHtml(order.poNumber)}</div>` : ""}
     </div>
+    ${order.tags?.length ? `<div class="detail-block"><span class="detail-label">Tags</span><div>${tagBadges(order.tags)}</div></div>` : ""}
     ${order.items ? `<div class="detail-block"><span class="detail-label">Items</span><p>${escapeHtml(order.items)}</p></div>` : ""}
     ${order.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(order.notes)}</p></div>` : ""}
     <div class="detail-actions">
@@ -815,6 +1037,15 @@ function openOrderModal(id = null, presetClientId = null) {
       ${field("status", "Status", existing?.status || "New", "select", { choices: state.meta.orderStatuses })}
       ${field("paymentStatus", "Payment status", existing?.paymentStatus || "Unpaid", "select", { choices: state.meta.paymentStatuses })}
     </div>
+    <div class="field-row">
+      ${field("invoiceNumber", "Invoice #", existing?.invoiceNumber || "")}
+      ${field("poNumber", "PO #", existing?.poNumber || "")}
+    </div>
+    <div class="field">
+      <label for="tags">Tags <span class="field-hint">comma-separated</span></label>
+      <input id="tags" name="tags" type="text" value="${escapeHtml(existing?.tagsLabel || (Array.isArray(existing?.tags) ? existing.tags.join(", ") : existing?.tags || ""))}" />
+      <div class="tag-presets">${(state.meta?.orderTagPresets || []).map((t) => `<button type="button" class="tag tag--click" data-tag-preset="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join("")}</div>
+    </div>
     ${field("notes", "Notes", existing?.notes || "", "textarea")}
   `;
 
@@ -860,6 +1091,17 @@ function openOrderModal(id = null, presetClientId = null) {
     });
 
     if (isNew) wireNewClientToggle(defaultMode);
+    $$("[data-tag-preset]").forEach((btn) => {
+      btn.onclick = () => {
+        const input = $("#tags");
+        const parts = input.value
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+        if (!parts.includes(btn.dataset.tagPreset)) parts.push(btn.dataset.tagPreset);
+        input.value = parts.join(", ");
+      };
+    });
   } catch (err) {
     toast(err.message || "Something went wrong.");
   }
@@ -900,10 +1142,105 @@ async function refresh() {
   renderCurrentView();
 }
 
+function wireGlobalSearch() {
+  const input = $("#global-search");
+  const results = $("#global-search-results");
+  if (!input || !results) return;
+
+  function hideResults() {
+    results.hidden = true;
+  }
+
+  function showResults(html) {
+    results.innerHTML = html;
+    results.hidden = !html;
+  }
+
+  input.oninput = () => {
+    clearTimeout(state.searchTimer);
+    const q = input.value.trim();
+    if (!q) {
+      hideResults();
+      return;
+    }
+    state.searchTimer = setTimeout(async () => {
+      try {
+        const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
+        if (!data.clients?.length && !data.orders?.length) {
+          showResults(`<div class="global-search__empty">No matches for “${escapeHtml(q)}”</div>`);
+          return;
+        }
+        const clientHtml = data.clients?.length
+          ? `<div class="global-search__group"><strong>Clients</strong>${data.clients
+              .map(
+                (c) => `<button type="button" class="global-search__hit" data-open-client="${c.id}">${escapeHtml(c.name)}${c.email ? ` · ${escapeHtml(c.email)}` : ""}</button>`
+              )
+              .join("")}</div>`
+          : "";
+        const orderHtml = data.orders?.length
+          ? `<div class="global-search__group"><strong>Orders</strong>${data.orders
+              .map(
+                (o) => `<button type="button" class="global-search__hit" data-open-order="${o.id}">${escapeHtml(o.orderId)} · ${escapeHtml(o.clientName)}</button>`
+              )
+              .join("")}</div>`
+          : "";
+        showResults(clientHtml + orderHtml);
+        $$("[data-open-client]").forEach((btn) => {
+          btn.onclick = () => {
+            hideResults();
+            input.value = "";
+            openClientDetail(btn.dataset.openClient);
+          };
+        });
+        $$("[data-open-order]").forEach((btn) => {
+          btn.onclick = () => {
+            hideResults();
+            input.value = "";
+            openOrderDetail(btn.dataset.openOrder);
+          };
+        });
+      } catch {
+        hideResults();
+      }
+    }, 220);
+  };
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#global-search-wrap")) hideResults();
+  });
+}
+
+function maybeNotifyOverdue() {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const n = state.dashboard?.overdueOrders || 0;
+  if (n <= 0) return;
+  const key = `crm-notify-${new Date().toISOString().slice(0, 10)}`;
+  if (sessionStorage.getItem(key)) return;
+  sessionStorage.setItem(key, "1");
+  new Notification("CRM: overdue orders", { body: `${n} open order${n === 1 ? "" : "s"} past due`, icon: "/icon.svg" });
+}
+
+async function requestNotifications() {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    const perm = await Notification.requestPermission();
+    if (perm === "granted") maybeNotifyOverdue();
+  }
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
 function wireChrome() {
   $$(".nav__item").forEach((btn) => {
     btn.onclick = () => setView(btn.dataset.view);
   });
+  $("#save-view-btn")?.addEventListener("click", () => saveCurrentView().catch((err) => toast(err.message)));
+  wireGlobalSearch();
+  registerServiceWorker();
+  requestNotifications();
   $("#view-orders").addEventListener("click", handleOrdersViewClick);
   $("#modal-close").onclick = () => $("#modal").close();
   $("#modal-cancel").onclick = () => $("#modal").close();

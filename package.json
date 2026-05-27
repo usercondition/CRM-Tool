@@ -1,6 +1,6 @@
 {
   "name": "simple-crm",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Simple CRM to track clients and orders",
   "main": "server.js",
@@ -12,6 +12,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "nodemailer": "^7.0.3",
     "pg": "^8.16.0"
   }
 }

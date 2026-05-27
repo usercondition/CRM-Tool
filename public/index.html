@@ -47,6 +47,13 @@
           <button type="button" class="nav__item" data-view="orders">Orders</button>
           <button type="button" class="nav__item" data-view="clients">Clients</button>
         </nav>
+        <div id="saved-views-nav" class="saved-views" hidden>
+          <div class="saved-views__header">
+            <span>Saved views</span>
+            <button type="button" class="btn btn--ghost btn--tiny" id="save-view-btn" title="Save current filters">+</button>
+          </div>
+          <div id="saved-views-list" class="saved-views__list"></div>
+        </div>
         <div class="sidebar__footer">
           <p id="storage-badge" class="storage-badge" title="Where your data is stored"></p>
           <button type="button" class="btn btn--ghost btn--block" id="logout-btn" hidden>Sign out</button>
@@ -59,7 +66,13 @@
             <h1 id="page-title">Dashboard</h1>
             <p id="page-subtitle">Overview of clients and open work</p>
           </div>
-          <div class="topbar__actions" id="topbar-actions"></div>
+          <div class="topbar__right">
+            <div class="global-search" id="global-search-wrap">
+              <input type="search" id="global-search" placeholder="Search clients & orders…" autocomplete="off" />
+              <div id="global-search-results" class="global-search__results" hidden></div>
+            </div>
+            <div class="topbar__actions" id="topbar-actions"></div>
+          </div>
         </header>
 
         <div id="toast" class="toast" hidden role="status"></div>

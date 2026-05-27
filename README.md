@@ -19,12 +19,17 @@ Without `DATABASE_URL`, data is stored in `data/store.json`. Without `CRM_PASSWO
 
 ## Features
 
-- **Dashboard** — open/overdue/unpaid stats, needs-attention lists, recent activity feed
-- **Clients & orders** — full CRUD, Kanban, search and filters
+- **Dashboard** — today/week strip, pipeline value, payment snapshot, 14-day due calendar, 90-day revenue chart, client health, stale orders, overdue/unpaid lists, activity feed, quick filter actions
+- **Global search** — find clients and orders from the header (name, order ID, tags, invoice/PO)
+- **Saved views** — save order filter combinations from the Orders sidebar
+- **Clients & orders** — full CRUD, Kanban, search and filters (Open / Overdue / Unpaid / Stale)
+- **Order fields** — tags (`rush`, `repeat`, `warranty` presets), invoice #, PO #
 - **Order detail** — activity timeline, quick status advance, mark paid, add notes
 - **Client detail** — contact summary and full order history per client
-- **Smart filters** — Open, Overdue, Unpaid chips on the Orders view
-- **CSV export** — download clients or orders from the Orders / Clients screens
+- **CSV export** — includes tags, invoice, and PO columns
+- **Daily digest** — preview in app; email via SMTP + `CRM_DIGEST_EMAIL`
+- **PWA** — installable with offline static caching (`manifest` + service worker)
+- **Browser notifications** — optional alert when overdue orders exist (after permission)
 - **Password login** — enable with `CRM_PASSWORD` (required for public hosting)
 - **PostgreSQL** — persistent storage when `DATABASE_URL` is set (auto on Render)
 
@@ -43,6 +48,7 @@ Without `DATABASE_URL`, data is stored in `data/store.json`. Without `CRM_PASSWO
 - [ ] Sign in at your public URL
 - [ ] Add a real client and order — confirm they survive a redeploy (PostgreSQL)
 - [ ] Use **Export CSV** to back up data periodically
+- [ ] Hard refresh after deploys (`Ctrl+Shift+R`)
 
 ## Environment variables
 
@@ -51,6 +57,9 @@ Without `DATABASE_URL`, data is stored in `data/store.json`. Without `CRM_PASSWO
 | `CRM_PASSWORD` | Yes (production) | Single shared login password |
 | `CRM_SESSION_SECRET` | No | Cookie signing secret (defaults to `CRM_PASSWORD`) |
 | `DATABASE_URL` | No (yes on Render) | PostgreSQL connection string |
+| `CRM_DIGEST_EMAIL` | No | Default recipient for digest emails |
+| `SMTP_*` | No | SMTP settings to send digest email |
+| `STALE_ORDER_DAYS` | No | Days without activity before an order is stale (default 7) |
 | `PORT` | No | Server port (Render sets automatically) |
 
 See `.env.example` for local development.
@@ -63,30 +72,28 @@ See `.env.example` for local development.
 | GET | `/api/auth/status` | Login state |
 | POST | `/api/auth/login` | Sign in |
 | POST | `/api/auth/logout` | Sign out |
+| GET | `/api/meta` | Status lists, tag presets, storage mode |
+| GET | `/api/dashboard` | Analytics dashboard payload |
+| GET | `/api/search?q=` | Global search |
+| GET/PUT | `/api/settings` | App settings (digest email) |
+| GET/POST | `/api/saved-views` | List or create saved order views |
+| DELETE | `/api/saved-views/:id` | Delete a saved view |
+| GET | `/api/digest/preview` | Plain-text daily digest |
+| POST | `/api/digest/send` | Send digest email (requires SMTP) |
 | GET | `/api/export/clients.csv` | Export clients |
 | GET | `/api/export/orders.csv` | Export orders |
-| GET | `/api/dashboard` | Summary stats |
 | GET/POST | `/api/clients` | List or create clients |
-| GET/PUT/DELETE | `/api/orders/:id` | Single order |
+| GET/PUT/DELETE | `/api/clients/:id` | Single client |
 | GET | `/api/clients/:id?detail=1` | Client with order list |
 | GET/POST | `/api/orders` | List or create orders |
-| GET | `/api/orders/:id/activity` | Order change history |
-| POST | `/api/orders/:id/activity` | Add a note to the timeline |
+| GET/PUT/DELETE | `/api/orders/:id` | Single order |
+| GET/POST | `/api/orders/:id/activity` | Order timeline / add note |
 | PATCH | `/api/orders/:id/quick` | Quick status / payment update |
-
-## Roadmap
-
-- [x] Persistent PostgreSQL on Render
-- [x] Password login
-- [x] CSV export
-- [x] Order activity timeline and quick actions
-- [x] Needs-attention dashboard (overdue / unpaid)
-- [ ] PWA install prompt + app icons
-- [ ] Desktop/mobile app shell (Tauri / Capacitor)
-- [ ] Multi-user accounts (optional)
 
 ## Order workflow
 
 Status: `New` → `In Progress` → `Shipped` → `Delivered`
 
 Payment: `Unpaid`, `Partial`, `Paid`, `Refunded`
+
+Tag presets: `rush`, `repeat`, `warranty` (comma-separated custom tags also supported)
