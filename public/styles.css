@@ -761,6 +761,45 @@ textarea {
   color: var(--danger);
 }
 
+.address-autocomplete-wrap {
+  position: relative;
+}
+
+.address-suggest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 40;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.address-suggest__hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.address-suggest__hit:hover {
+  background: var(--surface-2);
+}
+
+.pac-container {
+  z-index: 10000;
+}
+
 .digest-preview {
   white-space: pre-wrap;
   font-size: 0.85rem;

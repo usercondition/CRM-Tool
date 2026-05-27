@@ -18,7 +18,9 @@ const {
   validateClient,
   validateOrder,
   toCsv,
+  parseDecimal,
 } = require("./lib/helpers");
+const { normalizeAddressParts, formatAddress, fetchAddressSuggestions, US_STATES } = require("./lib/address");
 const {
   STALE_DAYS,
   ORDER_TAG_PRESETS,
@@ -105,11 +107,21 @@ async function buildDashboard(store) {
 }
 
 function normalizeClientInput(body, existing = null) {
+  const parts = normalizeAddressParts(body, existing);
+  const address =
+    body.address !== undefined
+      ? String(body.address).trim() || formatAddress(parts)
+      : formatAddress(parts) || (existing ? existing.address : "");
   return {
     name: body.name !== undefined ? String(body.name).trim() : existing.name,
     email: body.email !== undefined ? String(body.email).trim() : existing.email,
     phone: body.phone !== undefined ? String(body.phone).trim() : existing.phone,
-    address: body.address !== undefined ? String(body.address).trim() : existing.address,
+    address,
+    addressLine1: parts.addressLine1,
+    addressLine2: parts.addressLine2,
+    city: parts.city,
+    state: parts.state,
+    zip: parts.zip,
     notes: body.notes !== undefined ? String(body.notes).trim() : existing.notes,
   };
 }
@@ -126,8 +138,8 @@ function normalizeOrderInput(body, existing = null) {
     clientId: body.clientId !== undefined ? body.clientId : existing.clientId,
     dateReceived: body.dateReceived !== undefined ? body.dateReceived : existing.dateReceived,
     items: body.items !== undefined ? String(body.items).trim() : existing.items,
-    quantity: body.quantity !== undefined ? Number(body.quantity) : existing.quantity,
-    totalCost: body.totalCost !== undefined ? Number(body.totalCost) : existing.totalCost,
+    quantity: body.quantity !== undefined ? parseDecimal(body.quantity) : existing.quantity,
+    totalCost: body.totalCost !== undefined ? parseDecimal(body.totalCost) : existing.totalCost,
     status: body.status !== undefined ? body.status : existing.status,
     paymentStatus: body.paymentStatus !== undefined ? body.paymentStatus : existing.paymentStatus,
     dueDate: body.dueDate !== undefined ? body.dueDate : existing.dueDate,
@@ -218,6 +230,9 @@ async function startServer() {
             storage: store.mode,
             digestEmailConfigured: Boolean(process.env.CRM_DIGEST_EMAIL),
             smtpConfigured: smtpConfigured(),
+            googleMapsApiKey: String(process.env.GOOGLE_MAPS_API_KEY || "").trim(),
+            addressAutocomplete: String(process.env.GOOGLE_MAPS_API_KEY || "").trim() ? "google" : "nominatim",
+            usStates: US_STATES,
           });
           return;
         }
@@ -231,6 +246,13 @@ async function startServer() {
           const q = url.searchParams.get("q") || "";
           const { clients, orders } = await loadEnrichedData(store);
           sendJson(res, 200, searchAll(clients, orders, q));
+          return;
+        }
+
+        if (pathname === "/api/address/suggest" && req.method === "GET") {
+          const q = url.searchParams.get("q") || "";
+          const suggestions = await fetchAddressSuggestions(q);
+          sendJson(res, 200, suggestions);
           return;
         }
 
@@ -315,6 +337,11 @@ async function startServer() {
             { header: "Email", key: "email" },
             { header: "Phone", key: "phone" },
             { header: "Address", key: "address" },
+            { header: "Street", key: "addressLine1" },
+            { header: "Apt/Unit", key: "addressLine2" },
+            { header: "City", key: "city" },
+            { header: "State", key: "state" },
+            { header: "ZIP", key: "zip" },
             { header: "Open orders", key: "totalOpenOrders" },
             { header: "Open value", key: "totalOpenValue" },
             { header: "Total orders", key: "orderCount" },

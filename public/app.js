@@ -103,6 +103,191 @@ function statusBadge(status) {
   return `<span class="badge ${map[status] || ""}">${escapeHtml(status)}</span>`;
 }
 
+function formatAddressDisplay(client) {
+  if (!client) return "";
+  if (client.addressLine1 || client.city || client.state || client.zip) {
+    const lines = [client.addressLine1, client.addressLine2, [client.city, client.state].filter(Boolean).join(", "), client.zip]
+      .filter(Boolean);
+    return lines.join("\n");
+  }
+  return client.address || "";
+}
+
+function prefixedName(prefix, name) {
+  return prefix ? `${prefix}${name.charAt(0).toUpperCase()}${name.slice(1)}` : name;
+}
+
+function buildClientPayloadFromForm(fd, prefix = "") {
+  const get = (key) => fd.get(prefixedName(prefix, key)) || "";
+  return {
+    name: String(get("name")).trim(),
+    email: String(get("email")).trim(),
+    phone: String(get("phone")).trim(),
+    addressLine1: String(get("addressLine1")).trim(),
+    addressLine2: String(get("addressLine2")).trim(),
+    city: String(get("city")).trim(),
+    state: String(get("state")).trim(),
+    zip: String(get("zip")).trim(),
+    notes: String(get("notes")).trim(),
+  };
+}
+
+function parseFormDecimal(value, label = "Amount") {
+  const s = String(value ?? "")
+    .trim()
+    .replace(/,/g, "");
+  if (!s) return 0;
+  const n = parseFloat(s);
+  if (!Number.isFinite(n)) throw new Error(`${label} must be a valid number.`);
+  return n;
+}
+
+function decimalField(name, label, value = "", options = {}) {
+  const display = value === "" || value == null ? "" : String(value);
+  return `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHtml(display)}" placeholder="0.00"${options.required ? " required" : ""} /></div>`;
+}
+
+function addressFieldsHtml(prefix = "", parts = {}) {
+  const id = (key) => prefixedName(prefix, key);
+  const stateOptions = (state.meta?.usStates || [])
+    .map(
+      ([code, label]) =>
+        `<option value="${code}" ${parts.state === code ? "selected" : ""}>${escapeHtml(label)}</option>`
+    )
+    .join("");
+  return `
+    <div class="field address-autocomplete-wrap">
+      <label for="${id("addressLine1")}">Street address</label>
+      <input id="${id("addressLine1")}" name="${id("addressLine1")}" type="text" value="${escapeHtml(parts.addressLine1 || "")}" autocomplete="address-line1" placeholder="Start typing for suggestions…" />
+      <div class="address-suggest" id="${id("addressSuggest")}" hidden></div>
+    </div>
+    ${field("addressLine2", "Apt, suite, unit", parts.addressLine2 || "", "text", { name: id("addressLine2"), id: id("addressLine2") })}
+    <div class="field-row">
+      ${field("city", "City", parts.city || "", "text", { name: id("city"), id: id("city") })}
+      <div class="field">
+        <label for="${id("state")}">State</label>
+        <select id="${id("state")}" name="${id("state")}">
+          <option value="">Select state</option>
+          ${stateOptions}
+        </select>
+      </div>
+    </div>
+    ${field("zip", "ZIP code", parts.zip || "", "text", { name: id("zip"), id: id("zip"), placeholder: "12345" })}
+  `;
+}
+
+function fillAddressFields(prefix, data) {
+  const set = (key, val) => {
+    const el = document.getElementById(prefixedName(prefix, key));
+    if (el) el.value = val || "";
+  };
+  set("addressLine1", data.addressLine1);
+  set("addressLine2", data.addressLine2);
+  set("city", data.city);
+  set("state", data.state);
+  set("zip", data.zip);
+}
+
+let googleMapsLoadPromise = null;
+
+function loadGoogleMaps(apiKey) {
+  if (window.google?.maps?.places) return Promise.resolve();
+  if (!googleMapsLoadPromise) {
+    googleMapsLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places`;
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Google Maps failed to load."));
+      document.head.appendChild(script);
+    });
+  }
+  return googleMapsLoadPromise;
+}
+
+function wireAddressAutocomplete(prefix = "") {
+  const line1 = document.getElementById(prefixedName(prefix, "addressLine1"));
+  const suggestBox = document.getElementById(prefixedName(prefix, "addressSuggest"));
+  if (!line1) return;
+
+  if (state.meta?.googleMapsApiKey) {
+    loadGoogleMaps(state.meta.googleMapsApiKey)
+      .then(() => {
+        const autocomplete = new google.maps.places.Autocomplete(line1, {
+          types: ["address"],
+          componentRestrictions: { country: "us" },
+          fields: ["address_components", "formatted_address"],
+        });
+        autocomplete.addListener("place_changed", () => {
+          const place = autocomplete.getPlace();
+          if (!place?.address_components) return;
+          const byType = (type) => place.address_components.find((c) => c.types.includes(type));
+          const streetNumber = byType("street_number")?.long_name || "";
+          const route = byType("route")?.long_name || "";
+          fillAddressFields(prefix, {
+            addressLine1: [streetNumber, route].filter(Boolean).join(" "),
+            addressLine2: byType("subpremise")?.long_name || "",
+            city:
+              byType("locality")?.long_name ||
+              byType("postal_town")?.long_name ||
+              byType("sublocality")?.long_name ||
+              "",
+            state: byType("administrative_area_level_1")?.short_name || "",
+            zip: byType("postal_code")?.long_name || "",
+          });
+        });
+      })
+      .catch(() => {});
+    return;
+  }
+
+  if (!suggestBox) return;
+  let suggestTimer = null;
+
+  function hideSuggest() {
+    suggestBox.hidden = true;
+    suggestBox.innerHTML = "";
+  }
+
+  line1.addEventListener("input", () => {
+    clearTimeout(suggestTimer);
+    const q = line1.value.trim();
+    if (q.length < 3) {
+      hideSuggest();
+      return;
+    }
+    suggestTimer = setTimeout(async () => {
+      try {
+        const rows = await api(`/api/address/suggest?q=${encodeURIComponent(q)}`);
+        if (!rows.length) {
+          hideSuggest();
+          return;
+        }
+        suggestBox.innerHTML = rows
+          .map(
+            (row, i) =>
+              `<button type="button" class="address-suggest__hit" data-suggest-idx="${i}">${escapeHtml(row.label)}</button>`
+          )
+          .join("");
+        suggestBox.hidden = false;
+        suggestBox._rows = rows;
+        suggestBox.querySelectorAll(".address-suggest__hit").forEach((btn) => {
+          btn.onclick = () => {
+            fillAddressFields(prefix, suggestBox._rows[Number(btn.dataset.suggestIdx)]);
+            hideSuggest();
+          };
+        });
+      } catch {
+        hideSuggest();
+      }
+    }, 280);
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".address-autocomplete-wrap")) hideSuggest();
+  });
+}
+
 function escapeHtml(str) {
   return String(str ?? "")
     .replace(/&/g, "&amp;")
@@ -691,7 +876,7 @@ function renderClients() {
                         <td>
                           ${c.email ? `<div>${escapeHtml(c.email)}</div>` : ""}
                           ${c.phone ? `<div style="color:var(--muted);">${escapeHtml(c.phone)}</div>` : ""}
-                          ${c.address ? `<div style="color:var(--muted);font-size:0.82rem;">${escapeHtml(c.address)}</div>` : ""}
+                          ${formatAddressDisplay(c) ? `<div style="color:var(--muted);font-size:0.82rem;white-space:pre-line;">${escapeHtml(formatAddressDisplay(c))}</div>` : ""}
                         </td>
                         <td>${c.totalOpenOrders}</td>
                         <td class="money">${money(c.totalOpenValue)}</td>
@@ -916,7 +1101,7 @@ async function openClientDetail(id) {
       <div><span class="detail-label">Open orders</span><strong>${data.totalOpenOrders}</strong></div>
       <div><span class="detail-label">Open value</span><strong class="money">${money(data.totalOpenValue)}</strong></div>
     </div>
-    ${data.address ? `<div class="detail-block"><span class="detail-label">Address</span><p>${escapeHtml(data.address)}</p></div>` : ""}
+    ${formatAddressDisplay(data) ? `<div class="detail-block"><span class="detail-label">Address</span><p style="white-space:pre-line;">${escapeHtml(formatAddressDisplay(data))}</p></div>` : ""}
     ${data.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(data.notes)}</p></div>` : ""}
     <div class="detail-actions">
       <button type="button" class="btn btn--primary" id="detail-new-order">+ New order</button>
@@ -958,31 +1143,50 @@ function openModalForm(title, bodyHtml, onSave, options = {}) {
 }
 
 function field(name, label, value = "", type = "text", options = {}) {
+  const fieldName = options.name || name;
+  const fieldId = options.id || fieldName;
   if (type === "textarea") {
-    return `<div class="field"><label for="${name}">${label}</label><textarea id="${name}" name="${name}">${escapeHtml(value)}</textarea></div>`;
+    return `<div class="field"><label for="${fieldId}">${label}</label><textarea id="${fieldId}" name="${fieldName}">${escapeHtml(value)}</textarea></div>`;
   }
   if (type === "select") {
     const opts = (options.choices || [])
       .map((c) => `<option value="${escapeHtml(c)}" ${c === value ? "selected" : ""}>${escapeHtml(c)}</option>`)
       .join("");
-    return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}">${opts}</select></div>`;
+    return `<div class="field"><label for="${fieldId}">${label}</label><select id="${fieldId}" name="${fieldName}">${opts}</select></div>`;
   }
-  return `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" value="${escapeHtml(value)}"${options.required ? " required" : ""}${options.step !== undefined ? ` step="${escapeHtml(String(options.step))}"` : ""}${options.min !== undefined ? ` min="${escapeHtml(String(options.min))}"` : ""} /></div>`;
+  return `<div class="field"><label for="${fieldId}">${label}</label><input id="${fieldId}" name="${fieldName}" type="${type}" value="${escapeHtml(value)}"${options.required ? " required" : ""}${options.step !== undefined ? ` step="${escapeHtml(String(options.step))}"` : ""}${options.min !== undefined ? ` min="${escapeHtml(String(options.min))}"` : ""}${options.placeholder ? ` placeholder="${escapeHtml(options.placeholder)}"` : ""}${options.inputmode ? ` inputmode="${options.inputmode}"` : ""} /></div>`;
+}
+
+function clientAddressForForm(client) {
+  if (!client) return { addressLine1: "", addressLine2: "", city: "", state: "", zip: "" };
+  if (client.addressLine1 || client.city || client.state || client.zip) {
+    return {
+      addressLine1: client.addressLine1 || "",
+      addressLine2: client.addressLine2 || "",
+      city: client.city || "",
+      state: client.state || "",
+      zip: client.zip || "",
+    };
+  }
+  if (client.address) return { addressLine1: client.address, addressLine2: "", city: "", state: "", zip: "" };
+  return { addressLine1: "", addressLine2: "", city: "", state: "", zip: "" };
 }
 
 function openClientModal(id = null) {
   const existing = id ? state.clients.find((c) => c.id === id) : null;
+  const parts = clientAddressForForm(existing);
   const body = `
     ${field("name", "Name", existing?.name || "", "text", { required: true })}
     <div class="field-row">
       ${field("email", "Email", existing?.email || "", "email")}
       ${field("phone", "Phone", existing?.phone || "")}
     </div>
-    ${field("address", "Address", existing?.address || "")}
+    ${addressFieldsHtml("", parts)}
     ${field("notes", "Notes", existing?.notes || "", "textarea")}
   `;
   openModalForm(existing ? "Edit client" : "New client", body, async (fd) => {
-    const payload = Object.fromEntries(fd.entries());
+    const payload = buildClientPayloadFromForm(fd, "");
+    if (!payload.name) throw new Error("Name is required.");
     if (existing) {
       await api(`/api/clients/${existing.id}`, { method: "PUT", body: JSON.stringify(payload) });
       toast("Client updated");
@@ -992,6 +1196,7 @@ function openClientModal(id = null) {
     }
     await refresh();
   });
+  wireAddressAutocomplete("");
 }
 
 function openOrderModal(id = null, presetClientId = null) {
@@ -1036,12 +1241,12 @@ function openOrderModal(id = null, presetClientId = null) {
       </div>
     </div>
     <div id="new-client-fields" ${defaultMode === "new" ? "" : "hidden"}>
-      ${field("newClientName", "Client name", "", "text", { required: defaultMode === "new" })}
+      ${field("newClientName", "Client name", "", "text", { required: defaultMode === "new", name: "newClientName", id: "newClientName" })}
       <div class="field-row">
-        ${field("newClientEmail", "Email", "", "email")}
-        ${field("newClientPhone", "Phone", "")}
+        ${field("newClientEmail", "Email", "", "email", { name: "newClientEmail", id: "newClientEmail" })}
+        ${field("newClientPhone", "Phone", "", "text", { name: "newClientPhone", id: "newClientPhone" })}
       </div>
-      ${field("newClientAddress", "Address", "")}
+      ${addressFieldsHtml("newClient", {})}
     </div>`
       : `<div class="field"><label for="clientId">Client</label><select id="clientId" name="clientId" required>${clientOptions}</select></div>`;
 
@@ -1054,8 +1259,8 @@ function openOrderModal(id = null, presetClientId = null) {
     </div>
     ${field("items", "Items / description", existing?.items || "", "textarea")}
     <div class="field-row">
-      ${field("quantity", "Quantity", existing?.quantity ?? 1, "number", { step: "any", min: 0 })}
-      ${field("totalCost", "Total cost", existing?.totalCost ?? 0, "number", { step: "0.01", min: 0 })}
+      ${decimalField("quantity", "Quantity", existing?.quantity ?? 1)}
+      ${decimalField("totalCost", "Total cost", existing?.totalCost ?? "")}
     </div>
     <div class="field-row">
       ${field("status", "Status", existing?.status || "New", "select", { choices: state.meta.orderStatuses })}
@@ -1075,24 +1280,13 @@ function openOrderModal(id = null, presetClientId = null) {
 
   openModalForm(existing ? "Edit order" : "New order", body, async (fd) => {
       const payload = Object.fromEntries(fd.entries());
-      payload.quantity = Number(payload.quantity);
-      payload.totalCost = Number(payload.totalCost);
+      payload.quantity = parseFormDecimal(payload.quantity, "Quantity");
+      payload.totalCost = parseFormDecimal(payload.totalCost, "Total cost");
 
       if (isNew && payload.clientMode === "new") {
-        const name = String(payload.newClientName || "").trim();
-        if (!name) throw new Error("Client name is required.");
-        const client = await api(
-          "/api/clients",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              name,
-              email: payload.newClientEmail || "",
-              phone: payload.newClientPhone || "",
-              address: payload.newClientAddress || "",
-            }),
-          }
-        );
+        const clientPayload = buildClientPayloadFromForm(fd, "newClient");
+        if (!clientPayload.name) throw new Error("Client name is required.");
+        const client = await api("/api/clients", { method: "POST", body: JSON.stringify(clientPayload) });
         payload.clientId = client.id;
       }
 
@@ -1100,7 +1294,12 @@ function openOrderModal(id = null, presetClientId = null) {
       delete payload.newClientName;
       delete payload.newClientEmail;
       delete payload.newClientPhone;
-      delete payload.newClientAddress;
+      delete payload.newClientAddressLine1;
+      delete payload.newClientAddressLine2;
+      delete payload.newClientCity;
+      delete payload.newClientState;
+      delete payload.newClientZip;
+      delete payload.newClientAddressSuggest;
 
       if (!payload.clientId) throw new Error("Please select or create a client.");
 
@@ -1115,6 +1314,7 @@ function openOrderModal(id = null, presetClientId = null) {
     });
 
     if (isNew) wireNewClientToggle(defaultMode);
+    wireAddressAutocomplete("newClient");
     $$("[data-tag-preset]").forEach((btn) => {
       btn.onclick = () => {
         const input = $("#tags");
@@ -1144,6 +1344,7 @@ function wireNewClientToggle(initialMode) {
     newBlock.hidden = !isNew;
     if (clientSelect) clientSelect.required = !isNew;
     if (nameInput) nameInput.required = isNew;
+    if (isNew) wireAddressAutocomplete("newClient");
   }
 
   applyMode(initialMode);
