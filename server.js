@@ -64,7 +64,11 @@ function serveStatic(req, res, filePath, contentType) {
       sendText(res, 404, "Not found");
       return;
     }
-    res.writeHead(200, { "Content-Type": contentType });
+    const headers = { "Content-Type": contentType };
+    if (filePath.endsWith(".js") || filePath.endsWith(".css")) {
+      headers["Cache-Control"] = "no-cache";
+    }
+    res.writeHead(200, headers);
     res.end(data);
   });
 }

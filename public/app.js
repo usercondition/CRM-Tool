@@ -418,32 +418,36 @@ function renderOrders() {
       renderOrders();
     };
   });
+}
 
-  $$("[data-order-id]").forEach((el) => {
-    if (el.closest(".row-actions")) return;
-    el.onclick = () => openOrderDetail(el.dataset.orderId);
-  });
-  $$("[data-view-order]").forEach((btn) => {
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      openOrderDetail(btn.dataset.viewOrder);
-    };
-  });
-  $$("[data-edit-order]").forEach((btn) => {
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      openOrderModal(btn.dataset.editOrder);
-    };
-  });
-  $$("[data-delete-order]").forEach((btn) => {
-    btn.onclick = async (e) => {
-      e.stopPropagation();
+function handleOrdersViewClick(e) {
+  const viewBtn = e.target.closest("[data-view-order]");
+  if (viewBtn) {
+    e.preventDefault();
+    openOrderDetail(viewBtn.dataset.viewOrder);
+    return;
+  }
+  const editBtn = e.target.closest("[data-edit-order]");
+  if (editBtn) {
+    e.preventDefault();
+    openOrderModal(editBtn.dataset.editOrder);
+    return;
+  }
+  const deleteBtn = e.target.closest("[data-delete-order]");
+  if (deleteBtn) {
+    e.preventDefault();
+    (async () => {
       if (!confirm("Delete this order?")) return;
-      await api(`/api/orders/${btn.dataset.deleteOrder}`, { method: "DELETE" });
+      await api(`/api/orders/${deleteBtn.dataset.deleteOrder}`, { method: "DELETE" });
       toast("Order deleted");
       await refresh();
-    };
-  });
+    })().catch((err) => toast(err.message));
+    return;
+  }
+  const card = e.target.closest(".card[data-order-id]");
+  if (card) {
+    openOrderDetail(card.dataset.orderId);
+  }
 }
 
 function renderClients() {
@@ -526,7 +530,7 @@ function openModal(title, bodyHtml, onSave, options = {}) {
     saveBtn.textContent = options.saveLabel || "Save";
   }
   const dialog = $("#modal");
-  dialog.showModal();
+  if (dialog.open) dialog.close();
   const form = $("#modal-form");
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -538,16 +542,18 @@ function openModal(title, bodyHtml, onSave, options = {}) {
       toast(err.message);
     }
   };
-}
-
-async function quickOrderPatch(orderId, payload) {
-  await api(`/api/orders/${orderId}/quick`, { method: "PATCH", body: JSON.stringify(payload) });
-  await refresh();
+  dialog.showModal();
 }
 
 async function openOrderDetail(id) {
-  const order = state.orders.find((o) => o.id === id) || (await api(`/api/orders/${id}`));
-  const activity = await api(`/api/orders/${id}/activity`);
+  try {
+    const order = state.orders.find((o) => o.id === id) || (await api(`/api/orders/${id}`));
+    let activity = [];
+    try {
+      activity = await api(`/api/orders/${id}/activity`);
+    } catch {
+      activity = [];
+    }
   const flow = state.meta.orderStatuses;
   const next = flow[flow.indexOf(order.status) + 1];
   const timeline =
@@ -626,6 +632,14 @@ async function openOrderDetail(id) {
     await refresh();
     openOrderDetail(id);
   };
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function quickOrderPatch(orderId, payload) {
+  await api(`/api/orders/${orderId}/quick`, { method: "PATCH", body: JSON.stringify(payload) });
+  await refresh();
 }
 
 async function openClientDetail(id) {
@@ -735,11 +749,12 @@ function openClientModal(id = null) {
 }
 
 function openOrderModal(id = null) {
-  if (!state.clients.length) {
-    toast("Add a client before creating an order.");
-    setView("clients");
-    return;
-  }
+  try {
+    if (!state.clients.length) {
+      toast("Add a client before creating an order.");
+      setView("clients");
+      return;
+    }
   const existing = id ? state.orders.find((o) => o.id === id) : null;
   const clientOptions = state.clients
     .map(
@@ -780,6 +795,9 @@ function openOrderModal(id = null) {
     }
     await refresh();
   });
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 function today() {
@@ -800,6 +818,7 @@ function wireChrome() {
   $$(".nav__item").forEach((btn) => {
     btn.onclick = () => setView(btn.dataset.view);
   });
+  $("#view-orders").addEventListener("click", handleOrdersViewClick);
   $("#modal-close").onclick = () => $("#modal").close();
   $("#modal-cancel").onclick = () => $("#modal").close();
   $("#login-form").onsubmit = async (e) => {
