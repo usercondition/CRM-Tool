@@ -695,11 +695,7 @@ async function openClientDetail(id) {
   };
   $("#detail-new-order").onclick = () => {
     $("#modal").close();
-    openOrderModal();
-    setTimeout(() => {
-      const sel = $("#clientId");
-      if (sel) sel.value = id;
-    }, 50);
+    openOrderModal(null, id);
   };
   $$("#modal-body [data-order-id]").forEach((row) => {
     row.style.cursor = "pointer";
@@ -752,24 +748,60 @@ function openClientModal(id = null) {
   });
 }
 
-function openOrderModal(id = null) {
+function openOrderModal(id = null, presetClientId = null) {
   try {
-    if (!state.clients.length) {
-      toast("Add a client before creating an order.");
-      setView("clients");
-      return;
-    }
-  const existing = id ? state.orders.find((o) => o.id === id) : null;
-  const clientOptions = state.clients
-    .map(
-      (c) =>
-        `<option value="${c.id}" ${existing ? (existing.clientId === c.id ? "selected" : "") : ""}>${escapeHtml(c.name)}</option>`
-    )
-    .join("");
+    const existing = id ? state.orders.find((o) => o.id === id) : null;
+    const isNew = !existing;
+    const hasClients = state.clients.length > 0;
+    const defaultMode = isNew && !hasClients ? "new" : "existing";
 
-  const body = `
+    const clientOptions = state.clients
+      .map(
+        (c) =>
+          `<option value="${c.id}" ${
+            existing
+              ? existing.clientId === c.id
+                ? "selected"
+                : ""
+              : presetClientId === c.id
+                ? "selected"
+                : ""
+          }>${escapeHtml(c.name)}</option>`
+      )
+      .join("");
+
+    const clientSection = isNew
+      ? `
+    <div class="client-mode">
+      <span class="detail-label">Client</span>
+      <div class="client-mode__toggle">
+        ${
+          hasClients
+            ? `<label class="client-mode__option"><input type="radio" name="clientMode" value="existing" ${defaultMode === "existing" ? "checked" : ""} /> Existing client</label>`
+            : ""
+        }
+        <label class="client-mode__option"><input type="radio" name="clientMode" value="new" ${defaultMode === "new" ? "checked" : ""} /> New client</label>
+      </div>
+    </div>
+    <div id="existing-client-fields" ${defaultMode === "new" ? "hidden" : ""}>
+      <div class="field">
+        <label for="clientId">Select client</label>
+        <select id="clientId" name="clientId" ${defaultMode === "existing" ? "required" : ""}>${clientOptions}</select>
+      </div>
+    </div>
+    <div id="new-client-fields" ${defaultMode === "new" ? "" : "hidden"}>
+      ${field("newClientName", "Client name", "", "text", { required: defaultMode === "new" })}
+      <div class="field-row">
+        ${field("newClientEmail", "Email", "", "email")}
+        ${field("newClientPhone", "Phone", "")}
+      </div>
+      ${field("newClientAddress", "Address", "")}
+    </div>`
+      : `<div class="field"><label for="clientId">Client</label><select id="clientId" name="clientId" required>${clientOptions}</select></div>`;
+
+    const body = `
     ${field("orderId", "Order ID", existing?.orderId || suggestOrderId(), "text", { required: true })}
-    <div class="field"><label for="clientId">Client</label><select id="clientId" name="clientId" required>${clientOptions}</select></div>
+    ${clientSection}
     <div class="field-row">
       ${field("dateReceived", "Date received", existing?.dateReceived || today(), "date")}
       ${field("dueDate", "Due date", existing?.dueDate || "", "date")}
@@ -786,22 +818,72 @@ function openOrderModal(id = null) {
     ${field("notes", "Notes", existing?.notes || "", "textarea")}
   `;
 
-  openModalForm(existing ? "Edit order" : "New order", body, async (fd) => {
-    const payload = Object.fromEntries(fd.entries());
-    payload.quantity = Number(payload.quantity);
-    payload.totalCost = Number(payload.totalCost);
-    if (existing) {
-      await api(`/api/orders/${existing.id}`, { method: "PUT", body: JSON.stringify(payload) });
-      toast("Order updated");
-    } else {
-      await api("/api/orders", { method: "POST", body: JSON.stringify(payload) });
-      toast("Order created");
-    }
-    await refresh();
-  });
+    openModalForm(existing ? "Edit order" : "New order", body, async (fd) => {
+      const payload = Object.fromEntries(fd.entries());
+      payload.quantity = Number(payload.quantity);
+      payload.totalCost = Number(payload.totalCost);
+
+      if (isNew && payload.clientMode === "new") {
+        const name = String(payload.newClientName || "").trim();
+        if (!name) throw new Error("Client name is required.");
+        const client = await api(
+          "/api/clients",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              name,
+              email: payload.newClientEmail || "",
+              phone: payload.newClientPhone || "",
+              address: payload.newClientAddress || "",
+            }),
+          }
+        );
+        payload.clientId = client.id;
+      }
+
+      delete payload.clientMode;
+      delete payload.newClientName;
+      delete payload.newClientEmail;
+      delete payload.newClientPhone;
+      delete payload.newClientAddress;
+
+      if (!payload.clientId) throw new Error("Please select or create a client.");
+
+      if (existing) {
+        await api(`/api/orders/${existing.id}`, { method: "PUT", body: JSON.stringify(payload) });
+        toast("Order updated");
+      } else {
+        await api("/api/orders", { method: "POST", body: JSON.stringify(payload) });
+        toast("Order created");
+      }
+      await refresh();
+    });
+
+    if (isNew) wireNewClientToggle(defaultMode);
   } catch (err) {
     toast(err.message || "Something went wrong.");
   }
+}
+
+function wireNewClientToggle(initialMode) {
+  const existingBlock = $("#existing-client-fields");
+  const newBlock = $("#new-client-fields");
+  const clientSelect = $("#clientId");
+  const nameInput = $("#newClientName");
+  if (!existingBlock || !newBlock) return;
+
+  function applyMode(mode) {
+    const isNew = mode === "new";
+    existingBlock.hidden = isNew;
+    newBlock.hidden = !isNew;
+    if (clientSelect) clientSelect.required = !isNew;
+    if (nameInput) nameInput.required = isNew;
+  }
+
+  applyMode(initialMode);
+  $$('input[name="clientMode"]').forEach((radio) => {
+    radio.onchange = () => applyMode(radio.value);
+  });
 }
 
 function today() {

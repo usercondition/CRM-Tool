@@ -392,6 +392,35 @@ textarea {
   padding: 0.6rem 0.75rem;
 }
 
+.client-mode {
+  margin-bottom: 0.25rem;
+}
+
+.client-mode__toggle {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.client-mode__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.client-mode__option input {
+  accent-color: var(--accent);
+}
+
+#new-client-fields,
+#existing-client-fields {
+  margin-top: 0.5rem;
+}
+
 .modal__panel--wide {
   width: min(720px, calc(100vw - 2rem));
 }
