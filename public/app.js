@@ -518,9 +518,12 @@ function renderClients() {
 function openModal(title, bodyHtml, onSave, options = {}) {
   $("#modal-title").textContent = title;
   $("#modal-body").innerHTML = bodyHtml;
-  const panel = $("#modal-panel");
-  panel.classList.toggle("modal__panel--wide", Boolean(options.wide));
+  const panel = $("#modal-form");
+  if (panel) panel.classList.toggle("modal__panel--wide", Boolean(options.wide));
   const saveBtn = $("#modal-save");
+  if (!saveBtn || !$("#modal-body") || !$("#modal-title")) {
+    throw new Error("Modal UI failed to load. Hard-refresh the page.");
+  }
   if (options.hideSave) {
     saveBtn.hidden = true;
     saveBtn.type = "button";
@@ -530,6 +533,7 @@ function openModal(title, bodyHtml, onSave, options = {}) {
     saveBtn.textContent = options.saveLabel || "Save";
   }
   const dialog = $("#modal");
+  if (!dialog) throw new Error("Modal UI failed to load. Hard-refresh the page.");
   if (dialog.open) dialog.close();
   const form = $("#modal-form");
   form.onsubmit = async (e) => {
@@ -796,7 +800,7 @@ function openOrderModal(id = null) {
     await refresh();
   });
   } catch (err) {
-    toast(err.message);
+    toast(err.message || "Something went wrong.");
   }
 }
 
