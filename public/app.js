@@ -811,6 +811,8 @@ async function openOrderDetail(id) {
     <div class="detail-actions">
       ${next ? `<button type="button" class="btn btn--primary" id="detail-advance">Advance to ${escapeHtml(next)}</button>` : ""}
       ${order.paymentStatus !== "Paid" ? `<button type="button" class="btn" id="detail-mark-paid">Mark paid</button>` : ""}
+      <button type="button" class="btn" id="detail-share">Copy client link</button>
+      <button type="button" class="btn btn--ghost" id="detail-rotate-link" title="Invalidate old links">New link</button>
       <button type="button" class="btn" id="detail-edit">Edit order</button>
     </div>
     <div class="detail-block">
@@ -848,6 +850,28 @@ async function openOrderDetail(id) {
   $("#detail-edit").onclick = () => {
     $("#modal").close();
     openOrderModal(id);
+  };
+  $("#detail-share").onclick = async () => {
+    try {
+      const { url } = await api(`/api/orders/${id}/share-link`, { method: "POST", body: JSON.stringify({}) });
+      await navigator.clipboard.writeText(url);
+      toast("Client link copied");
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  $("#detail-rotate-link").onclick = async () => {
+    if (!confirm("Generate a new link? The old link will stop working.")) return;
+    try {
+      const { url } = await api(`/api/orders/${id}/share-link`, {
+        method: "POST",
+        body: JSON.stringify({ rotate: true }),
+      });
+      await navigator.clipboard.writeText(url);
+      toast("New client link copied");
+    } catch (err) {
+      toast(err.message);
+    }
   };
   $("#detail-add-note").onclick = async () => {
     const text = $("#detail-note-input").value.trim();

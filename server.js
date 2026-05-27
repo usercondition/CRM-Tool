@@ -29,6 +29,7 @@ const {
   searchAll,
 } = require("./lib/analytics");
 const { sendDigestEmail, buildDigestText, smtpConfigured } = require("./lib/digest");
+const { buildPublicOrderView, publicTrackUrl } = require("./lib/publicOrder");
 const { nextStatus } = require("./lib/activity");
 
 const PORT = Number(process.env.PORT || 3847);
@@ -150,10 +151,18 @@ async function startServer() {
       return;
     }
 
+    const trackMatch = pathname.match(/^\/track\/([^/]+)$/);
+    if (req.method === "GET" && trackMatch) {
+      serveStatic(req, res, path.join(ROOT, "public", "track.html"), "text/html; charset=utf-8");
+      return;
+    }
+
     const staticMap = {
       "/styles.css": "text/css; charset=utf-8",
       "/app.js": "application/javascript; charset=utf-8",
       "/sw.js": "application/javascript; charset=utf-8",
+      "/track.js": "application/javascript; charset=utf-8",
+      "/track.css": "text/css; charset=utf-8",
       "/manifest.webmanifest": "application/manifest+json; charset=utf-8",
       "/icon.svg": "image/svg+xml",
     };
@@ -280,6 +289,20 @@ async function startServer() {
             return;
           }
           sendJson(res, 200, result);
+          return;
+        }
+
+        const publicOrderMatch = pathname.match(/^\/api\/public\/orders\/([^/]+)$/);
+        if (publicOrderMatch && req.method === "GET") {
+          const token = decodeURIComponent(publicOrderMatch[1]);
+          const order = await store.getOrderByPublicToken(token);
+          if (!order) {
+            sendJson(res, 404, { error: "Order not found." });
+            return;
+          }
+          const client = await store.getClient(order.clientId);
+          const activity = await store.listOrderActivity(order.id);
+          sendJson(res, 200, buildPublicOrderView(order, client, activity));
           return;
         }
 
@@ -440,6 +463,20 @@ async function startServer() {
             sendJson(res, 201, enrichOrderMetrics(order, clientsById, {}));
             return;
           }
+        }
+
+        const orderShareMatch = pathname.match(/^\/api\/orders\/([^/]+)\/share-link$/);
+        if (orderShareMatch && req.method === "POST") {
+          const id = orderShareMatch[1];
+          const order = await store.getOrder(id);
+          if (!order) {
+            sendJson(res, 404, { error: "Order not found." });
+            return;
+          }
+          const body = await readBody(req);
+          const token = body?.rotate ? await store.rotatePublicToken(id) : await store.ensurePublicToken(id);
+          sendJson(res, 200, { url: publicTrackUrl(req, token), token });
+          return;
         }
 
         const orderActivityMatch = pathname.match(/^\/api\/orders\/([^/]+)\/activity$/);

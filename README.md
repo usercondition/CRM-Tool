@@ -25,6 +25,7 @@ Without `DATABASE_URL`, data is stored in `data/store.json`. Without `CRM_PASSWO
 - **Clients & orders** — full CRUD, Kanban, search and filters (Open / Overdue / Unpaid / Stale)
 - **Order fields** — tags (`rush`, `repeat`, `warranty` presets), invoice #, PO #
 - **Order detail** — activity timeline, quick status advance, mark paid, add notes
+- **Client tracking link** — share a read-only `/track/…` URL; clients can refresh or get live updates every 30s (no login)
 - **Client detail** — contact summary and full order history per client
 - **CSV export** — includes tags, invoice, and PO columns
 - **Daily digest** — preview in app; email via SMTP + `CRM_DIGEST_EMAIL`
@@ -89,6 +90,9 @@ See `.env.example` for local development.
 | GET/PUT/DELETE | `/api/orders/:id` | Single order |
 | GET/POST | `/api/orders/:id/activity` | Order timeline / add note |
 | PATCH | `/api/orders/:id/quick` | Quick status / payment update |
+| POST | `/api/orders/:id/share-link` | Get or create client tracking URL (`rotate: true` to invalidate old link) |
+| GET | `/api/public/orders/:token` | Public read-only order status (no auth) |
+| GET | `/track/:token` | Client-facing status page |
 
 ## Order workflow
 
