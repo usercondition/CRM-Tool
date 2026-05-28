@@ -517,23 +517,40 @@ function buildOrderDetailPanel(order, activity) {
 }
 
 function renderOrderCard(order) {
-  const expanded = state.expandedOrderId === order.id;
-  const activity = state.orderActivityCache[order.id] || [];
-  return `<div class="card${expanded ? " card--open" : ""}" data-order-id="${order.id}"${expanded ? "" : ' draggable="true"'}>
+  const selected = state.expandedOrderId === order.id && state.ordersViewMode === "board";
+  return `<div class="card${selected ? " card--selected" : ""}" data-order-id="${order.id}"${selected ? "" : ' draggable="true"'}>
     <div class="card__summary">
       <div class="card__head">
         <strong class="card__title">${escapeHtml(order.orderId)}</strong>
-        <span class="card__chevron" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+        <span class="card__chevron" aria-hidden="true">${selected ? "●" : "○"}</span>
       </div>
       <div class="card__sub">${escapeHtml(order.clientName)} · ${money(order.totalCost)}</div>
       ${order.daysOverdue ? `<div class="card__flags"><span class="badge badge--overdue">${order.daysOverdue}d late</span></div>` : ""}
     </div>
-    ${
-      expanded
-        ? `<div class="order-detail-panel" data-order-id="${order.id}">${buildOrderDetailPanel(order, activity)}</div>`
-        : ""
-    }
   </div>`;
+}
+
+function renderOrderInspector() {
+  const id = state.expandedOrderId;
+  if (!id || state.ordersViewMode !== "board") return "";
+  const order = state.orders.find((o) => o.id === id);
+  if (!order) return "";
+  const activity = state.orderActivityCache[id] || [];
+  return `<section class="order-inspector" id="order-inspector" aria-label="Order details">
+    <div class="order-detail-panel order-detail-panel--inspector" data-order-id="${id}">
+      ${buildOrderDetailPanel(order, activity)}
+    </div>
+  </section>`;
+}
+
+function scrollToExpandedOrder(id) {
+  requestAnimationFrame(() => {
+    if (state.ordersViewMode === "board") {
+      $("#order-inspector")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    $(`.order-detail-panel[data-order-id="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
 }
 
 function renderOrderTableRows(order) {
@@ -675,11 +692,7 @@ async function expandOrder(id, { scroll = true } = {}) {
   }
   renderOrders();
   wireOrderDetailPanel(id);
-  if (scroll) {
-    requestAnimationFrame(() => {
-      $(`.order-detail-panel[data-order-id="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-  }
+  if (scroll) scrollToExpandedOrder(id);
 }
 
 async function showOrderInList(id) {
@@ -694,14 +707,12 @@ async function showOrderInList(id) {
   if (state.view !== "orders") setView("orders");
   else renderOrders();
   wireOrderDetailPanel(id);
-  requestAnimationFrame(() => {
-    $(`.order-detail-panel[data-order-id="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  });
+  scrollToExpandedOrder(id);
 }
 
 function wireKanbanDrag() {
   let draggedId = null;
-  $$(".card[data-order-id]:not(.card--open)").forEach((card) => {
+  $$(".card[data-order-id]:not(.card--selected)").forEach((card) => {
     card.draggable = true;
     card.addEventListener("dragstart", (e) => {
       draggedId = card.dataset.orderId;
@@ -1159,7 +1170,10 @@ function renderOrders() {
       </div>
     </div>`;
 
-  const boardSection = `<div class="kanban">${kanbanCols}</div>`;
+  const boardSection = `<div class="orders-board">
+    <div class="kanban">${kanbanCols}</div>
+    ${renderOrderInspector()}
+  </div>`;
 
   $("#view-orders").innerHTML = `
     <div class="toolbar">

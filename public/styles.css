@@ -1021,9 +1021,28 @@ tr:hover td {
 
 .kanban {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.85rem;
-  margin-bottom: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.orders-board {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.order-inspector {
+  background: var(--surface);
+  border: 1px solid rgba(110, 168, 254, 0.45);
+  border-radius: var(--radius);
+  padding: 1rem 1.15rem;
+  box-shadow: var(--shadow);
+}
+
+.order-detail-panel--inspector {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 .kanban__col--over {
@@ -1047,8 +1066,23 @@ tr:hover td {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.75rem;
-  min-height: 120px;
+  padding: 0.65rem;
+  min-height: 100px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kanban__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  flex: 1;
+  min-height: 0;
+  max-height: min(55vh, 480px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.15rem;
 }
 
 .kanban__title {
@@ -1059,9 +1093,14 @@ tr:hover td {
   letter-spacing: 0.04em;
 }
 
-.card--open {
+.card--selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(110, 168, 254, 0.25);
+  background: rgba(110, 168, 254, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(110, 168, 254, 0.45);
+}
+
+.card--selected .card__chevron {
+  color: var(--accent);
 }
 
 .card__summary {
@@ -1120,9 +1159,9 @@ tr:hover td {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 0.75rem;
-  margin-bottom: 0.55rem;
+  padding: 0.65rem 0.7rem;
   cursor: pointer;
+  min-width: 0;
 }
 
 .card:hover {
@@ -1656,12 +1695,6 @@ tr:hover td {
   padding: 0.1rem 0.45rem;
 }
 
-.kanban__cards {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
 @media (max-width: 960px) {
   .app {
     grid-template-columns: 1fr;
@@ -1684,6 +1717,14 @@ tr:hover td {
   .kpi-row,
   .order-detail__grid {
     grid-template-columns: 1fr;
+  }
+
+  .kanban__cards {
+    max-height: none;
+  }
+
+  .order-inspector {
+    padding: 0.85rem;
   }
 
   .cal-strip {
