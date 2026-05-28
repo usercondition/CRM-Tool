@@ -1,6 +1,6 @@
 {
   "name": "simple-crm",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Simple CRM to track clients and orders",
   "main": "server.js",

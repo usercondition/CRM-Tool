@@ -12,6 +12,8 @@ const state = {
   clientFilter: { q: "" },
   expandedOrderId: "",
   orderActivityCache: {},
+  ordersViewMode: localStorage.getItem("crm-orders-view") || "board",
+  dashboardAttention: "overdue",
   searchTimer: null,
 };
 
@@ -462,42 +464,53 @@ function buildOrderDetailPanel(order, activity) {
       : `<li class="timeline__item timeline__item--empty">No activity yet.</li>`;
 
   return `
-    <div class="order-detail-panel__head">
-      <span class="order-detail-panel__title">${escapeHtml(order.orderId)}</span>
-      <button type="button" class="btn btn--ghost btn--tiny" data-collapse-order="${order.id}">Close</button>
-    </div>
-    <div class="detail-grid">
-      <div><span class="detail-label">Client</span><strong>${escapeHtml(order.clientName)}</strong></div>
-      <div><span class="detail-label">Status</span>${statusBadge(order.status)}</div>
-      <div><span class="detail-label">Payment</span>${paymentBadge(order.paymentStatus)}</div>
-      <div><span class="detail-label">Total</span><strong class="money">${money(order.totalCost)}</strong></div>
-      <div><span class="detail-label">Received</span>${formatDate(order.dateReceived)}</div>
-      <div><span class="detail-label">Due</span>${formatDate(order.dueDate)}${order.daysOverdue ? ` <span class="badge badge--overdue">${order.daysOverdue}d late</span>` : ""}</div>
-      <div><span class="detail-label">Fulfillment</span><strong>${escapeHtml(order.fulfillmentType || "Ship")}</strong></div>
-      ${order.invoiceNumber ? `<div><span class="detail-label">Invoice #</span>${escapeHtml(order.invoiceNumber)}</div>` : ""}
-      ${order.poNumber ? `<div><span class="detail-label">PO #</span>${escapeHtml(order.poNumber)}</div>` : ""}
-    </div>
-    ${order.tags?.length ? `<div class="detail-block"><span class="detail-label">Tags</span><div>${tagBadges(order.tags)}</div></div>` : ""}
-    ${order.items ? `<div class="detail-block"><span class="detail-label">Items</span><p>${escapeHtml(order.items)}</p></div>` : ""}
-    ${order.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(order.notes)}</p></div>` : ""}
-    ${notifyRow}
-    <div class="detail-actions">
-      ${advanceBtn}
-      ${readyActions}
-      ${order.paymentStatus !== "Paid" ? `<button type="button" class="btn" id="detail-mark-paid">Mark paid</button>` : ""}
-      <button type="button" class="btn" id="detail-share">Copy client link</button>
-      <button type="button" class="btn btn--ghost" id="detail-rotate-link" title="Invalidate old links">New link</button>
-      <button type="button" class="btn" id="detail-edit">Edit order</button>
-    </div>
-    <div class="detail-block">
-      <span class="detail-label">Activity</span>
-      <ul class="timeline timeline--compact">${timeline}</ul>
-    </div>
-    <div class="detail-note">
-      <label for="detail-note-input">Add note</label>
-      <div class="detail-note__row">
-        <input id="detail-note-input" type="text" placeholder="Call client, shipped via UPS…" />
-        <button type="button" class="btn btn--primary" id="detail-add-note">Add</button>
+    <div class="order-detail">
+      <div class="order-detail__header">
+        <div>
+          <div class="order-detail__id">${escapeHtml(order.orderId)}</div>
+          <div class="order-detail__client">${escapeHtml(order.clientName)}</div>
+        </div>
+        <button type="button" class="btn btn--ghost btn--tiny" data-collapse-order="${order.id}">Close</button>
+      </div>
+      <div class="order-detail__badges">
+        ${statusBadge(order.status)}
+        ${paymentBadge(order.paymentStatus)}
+        ${order.fulfillmentType === "Pickup" ? `<span class="tag">Pickup</span>` : ""}
+        ${order.tags?.length ? tagBadges(order.tags) : ""}
+      </div>
+      <div class="order-detail__grid">
+        <dl class="fact-list">
+          <div><dt>Total</dt><dd class="money">${money(order.totalCost)}</dd></div>
+          <div><dt>Received</dt><dd>${formatDate(order.dateReceived)}</dd></div>
+          <div><dt>Due</dt><dd>${formatDate(order.dueDate)}${order.daysOverdue ? ` <span class="badge badge--overdue">${order.daysOverdue}d late</span>` : ""}</dd></div>
+          ${order.invoiceNumber ? `<div><dt>Invoice</dt><dd>${escapeHtml(order.invoiceNumber)}</dd></div>` : ""}
+          ${order.poNumber ? `<div><dt>PO</dt><dd>${escapeHtml(order.poNumber)}</dd></div>` : ""}
+        </dl>
+        <div class="order-detail__side">
+          ${order.items ? `<div class="order-detail__block"><span class="detail-label">Items</span><p>${escapeHtml(order.items)}</p></div>` : ""}
+          ${order.notes ? `<div class="order-detail__block"><span class="detail-label">Notes</span><p>${escapeHtml(order.notes)}</p></div>` : ""}
+          ${notifyRow}
+          <div class="detail-actions detail-actions--primary">
+            ${advanceBtn}
+            ${readyActions}
+            ${order.paymentStatus !== "Paid" ? `<button type="button" class="btn" id="detail-mark-paid">Mark paid</button>` : ""}
+          </div>
+          <div class="detail-actions detail-actions--secondary">
+            <button type="button" class="btn btn--ghost" id="detail-share">Copy link</button>
+            <button type="button" class="btn btn--ghost" id="detail-rotate-link">New link</button>
+            <button type="button" class="btn btn--ghost" id="detail-edit">Edit</button>
+          </div>
+        </div>
+      </div>
+      <details class="order-detail__activity"${activity.length ? " open" : ""}>
+        <summary>Activity (${activity.length})</summary>
+        <ul class="timeline timeline--compact">${timeline}</ul>
+      </details>
+      <div class="detail-note">
+        <div class="detail-note__row">
+          <input id="detail-note-input" type="text" placeholder="Add a note…" aria-label="Add note" />
+          <button type="button" class="btn btn--primary" id="detail-add-note">Add</button>
+        </div>
       </div>
     </div>
   `;
@@ -509,12 +522,11 @@ function renderOrderCard(order) {
   return `<div class="card${expanded ? " card--open" : ""}" data-order-id="${order.id}"${expanded ? "" : ' draggable="true"'}>
     <div class="card__summary">
       <div class="card__head">
-        <div class="card__title">${escapeHtml(order.orderId)}</div>
+        <strong class="card__title">${escapeHtml(order.orderId)}</strong>
         <span class="card__chevron" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
       </div>
-      <div class="card__meta">${escapeHtml(order.clientName)} · ${money(order.totalCost)}</div>
-      ${order.fulfillmentType === "Pickup" ? `<div class="card__meta"><span class="tag">Pickup</span></div>` : ""}
-      ${order.daysOverdue ? `<div class="card__meta"><span class="badge badge--overdue">${order.daysOverdue}d overdue</span></div>` : ""}
+      <div class="card__sub">${escapeHtml(order.clientName)} · ${money(order.totalCost)}</div>
+      ${order.daysOverdue ? `<div class="card__flags"><span class="badge badge--overdue">${order.daysOverdue}d late</span></div>` : ""}
     </div>
     ${
       expanded
@@ -528,23 +540,23 @@ function renderOrderTableRows(order) {
   const expanded = state.expandedOrderId === order.id;
   const activity = state.orderActivityCache[order.id] || [];
   const summaryRow = `<tr class="order-row${expanded ? " order-row--open" : ""}" data-order-id="${order.id}">
-    <td><strong>${escapeHtml(order.orderId)}</strong><div style="color:var(--muted);font-size:0.82rem;">${escapeHtml(order.items || "")}</div>${tagBadges(order.tags)}</td>
-    <td>${escapeHtml(order.clientName)}</td>
-    <td>${formatDate(order.dateReceived)}</td>
-    <td>${formatDate(order.dueDate)}${order.daysOverdue ? `<div><span class="badge badge--overdue">${order.daysOverdue}d late</span></div>` : ""}</td>
+    <td>
+      <strong>${escapeHtml(order.orderId)}</strong>
+      <div class="cell-sub">${escapeHtml(order.clientName)}</div>
+    </td>
+    <td>${formatDate(order.dueDate)}${order.daysOverdue ? `<div class="cell-sub"><span class="badge badge--overdue">${order.daysOverdue}d late</span></div>` : ""}</td>
     <td>${statusBadge(order.status)}</td>
-    <td>${escapeHtml(order.paymentStatus)}</td>
     <td class="money">${money(order.totalCost)}</td>
-    <td class="row-actions">
-      <button type="button" class="btn${expanded ? " btn--primary" : ""}" data-toggle-order="${order.id}">${expanded ? "Hide" : "Details"}</button>
-      <button type="button" class="btn" data-copy-order="${order.id}" title="Copy client link">Link</button>
-      <button type="button" class="btn" data-edit-order="${order.id}">Edit</button>
-      <button type="button" class="btn btn--danger" data-delete-order="${order.id}">Delete</button>
+    <td class="row-actions row-actions--compact">
+      <button type="button" class="btn btn--ghost btn--tiny${expanded ? " is-active" : ""}" data-toggle-order="${order.id}">${expanded ? "Hide" : "Open"}</button>
+      <button type="button" class="btn btn--ghost btn--tiny" data-edit-order="${order.id}">Edit</button>
+      <button type="button" class="btn btn--ghost btn--tiny" data-copy-order="${order.id}" title="Copy link">Link</button>
+      <button type="button" class="btn btn--ghost btn--tiny btn--danger-text" data-delete-order="${order.id}">Delete</button>
     </td>
   </tr>`;
   const detailRow = expanded
     ? `<tr class="order-detail-row" data-order-detail-for="${order.id}">
-        <td colspan="8"><div class="order-detail-panel order-detail-panel--table" data-order-id="${order.id}">${buildOrderDetailPanel(order, activity)}</div></td>
+        <td colspan="5"><div class="order-detail-panel order-detail-panel--table" data-order-id="${order.id}">${buildOrderDetailPanel(order, activity)}</div></td>
       </tr>`
     : "";
   return summaryRow + detailRow;
@@ -747,10 +759,10 @@ function setView(view) {
   $("#saved-views-nav").hidden = view !== "orders";
 
   const titles = {
-    dashboard: ["Dashboard", "At-a-glance pipeline, payments, and follow-ups"],
-    orders: ["Orders", "Track status, due dates, and payments"],
-    clients: ["Clients", "Contact directory and open order counts"],
-    settings: ["Settings", "Automation, notifications, and daily digest"],
+    dashboard: ["Dashboard", "What needs your attention today"],
+    orders: ["Orders", "Board or list — click to expand details"],
+    clients: ["Clients", "Contacts and open order counts"],
+    settings: ["Settings", "Digest, notifications, and automation"],
   };
   const [title, subtitle] = titles[view];
   $("#page-title").textContent = title;
@@ -850,7 +862,6 @@ function renderDashboard() {
   const d = state.dashboard;
   if (!d) return;
 
-  const strip = d.todayStrip || {};
   const pay = d.paymentSnapshot || {};
 
   const overdueRows =
@@ -895,19 +906,6 @@ function renderDashboard() {
           .join("")
       : `<tr><td colspan="4" class="empty">All open orders are paid</td></tr>`;
 
-  const healthRows =
-    d.clientHealth?.length > 0
-      ? d.clientHealth
-          .map(
-            (c) => `<tr data-client-id="${c.id}">
-              <td><strong>${escapeHtml(c.name)}</strong></td>
-              <td>${(c.healthFlags || []).map((f) => `<span class="tag">${escapeHtml(f)}</span>`).join(" ")}</td>
-              <td class="money">${money(c.totalOpenValue)}</td>
-            </tr>`
-          )
-          .join("")
-      : `<tr><td colspan="3" class="empty">All clients look healthy</td></tr>`;
-
   const calendarCells = (d.calendarDays || [])
     .map(
       (day) => `<div class="cal-day ${day.count ? "cal-day--busy" : ""}" data-cal-date="${day.date}" title="${day.count} due">
@@ -932,107 +930,90 @@ function renderDashboard() {
           .join("")
       : `<li class="timeline__item timeline__item--empty">Activity will appear as you update orders.</li>`;
 
+  const attentionTab = state.dashboardAttention;
+  const attentionTables = {
+    overdue: { title: "Overdue orders", rows: overdueRows, cols: `<tr><th>Order</th><th>Client</th><th>Late</th><th>Total</th></tr>` },
+    unpaid: { title: "Unpaid orders", rows: unpaidRows, cols: `<tr><th>Order</th><th>Client</th><th>Payment</th><th>Total</th></tr>` },
+    stale: { title: "Stale orders", rows: staleRows, cols: `<tr><th>Order</th><th>Client</th><th>Idle</th><th>Status</th></tr>` },
+  };
+  const activeAttention = attentionTables[attentionTab] || attentionTables.overdue;
+
   $("#view-dashboard").innerHTML = `
-    <div class="quick-actions">
-      <button type="button" class="chip" data-dash-action="overdue">Overdue (${d.overdueOrders})</button>
-      <button type="button" class="chip" data-dash-action="unpaid">Unpaid (${d.unpaidOrders})</button>
-      <button type="button" class="chip" data-dash-action="stale">Stale (${d.staleOrders || 0})</button>
-      <button type="button" class="chip" data-dash-action="open">All open (${d.openOrders})</button>
+    <div class="kpi-row">
+      <div class="kpi kpi--warn"><span class="kpi__label">Overdue</span><strong class="kpi__value">${d.overdueOrders}</strong></div>
+      <div class="kpi kpi--warn"><span class="kpi__label">Unpaid</span><strong class="kpi__value">${d.unpaidOrders}</strong></div>
+      <div class="kpi"><span class="kpi__label">Open orders</span><strong class="kpi__value">${d.openOrders}</strong></div>
+      <div class="kpi"><span class="kpi__label">Open value</span><strong class="kpi__value money">${money(d.openValue)}</strong></div>
     </div>
-    <div class="today-strip">
-      <div class="today-strip__item"><span>Due today</span><strong>${strip.dueToday || 0}</strong><small>${money(strip.dueTodayValue || 0)}</small></div>
-      <div class="today-strip__item"><span>Due this week</span><strong>${strip.dueThisWeek || 0}</strong></div>
-      <div class="today-strip__item"><span>Received this week</span><strong>${strip.receivedThisWeek || 0}</strong></div>
-      <div class="today-strip__item"><span>Shipped this week</span><strong>${strip.shippedThisWeek || 0}</strong></div>
-      ${d.avgDaysToDeliver != null ? `<div class="today-strip__item"><span>Avg days to deliver</span><strong>${d.avgDaysToDeliver}</strong></div>` : ""}
-    </div>
-    <div class="stats">
-      <div class="stat"><div class="stat__label">Clients</div><div class="stat__value">${d.totalClients}</div></div>
-      <div class="stat"><div class="stat__label">Open orders</div><div class="stat__value">${d.openOrders}</div></div>
-      <div class="stat stat--warn"><div class="stat__label">Overdue</div><div class="stat__value">${d.overdueOrders}</div></div>
-      <div class="stat stat--warn"><div class="stat__label">Unpaid (open)</div><div class="stat__value">${d.unpaidOrders}</div></div>
-      <div class="stat"><div class="stat__label">Open value</div><div class="stat__value money">${money(d.openValue)}</div></div>
-      <div class="stat"><div class="stat__label">Outstanding</div><div class="stat__value money">${money(d.unpaidValue || 0)}</div></div>
-    </div>
-    <div class="grid-3">
-      <div class="panel">
-        <div class="panel__header"><h2>Pipeline value</h2></div>
-        <div class="pipeline">${pipelineBars(d.pipelineCount || {}, d.pipelineValue || {})}</div>
-      </div>
-      <div class="panel">
-        <div class="panel__header"><h2>Payment snapshot</h2></div>
-        <ul class="snapshot-list">
-          <li><span>Unpaid</span><strong>${pay.unpaid?.count || 0} · ${money(pay.unpaid?.value || 0)}</strong></li>
-          <li><span>Partial</span><strong>${pay.partial?.count || 0} · ${money(pay.partial?.value || 0)}</strong></li>
-          <li><span>Paid (open)</span><strong>${pay.paidOpen?.count || 0} · ${money(pay.paidOpen?.value || 0)}</strong></li>
-          <li><span>Paid this month</span><strong>${pay.paidThisMonth?.count || 0} · ${money(pay.paidThisMonth?.value || 0)}</strong></li>
-        </ul>
-      </div>
-      <div class="panel">
-        <div class="panel__header"><h2>Revenue (90 days)</h2></div>
-        ${miniBarChart(d.revenueChart)}
-      </div>
-    </div>
-    <div class="panel" style="margin-top:1rem;">
-      <div class="panel__header"><h2>Due dates — next 14 days</h2></div>
-      <div class="cal-strip">${calendarCells}</div>
-    </div>
-    <div class="grid-2" style="margin-top:1rem;">
-      <div class="panel">
-        <div class="panel__header"><h2>Overdue</h2></div>
-        <div class="table-wrap"><table><thead><tr><th>Order</th><th>Client</th><th>Late</th><th>Total</th></tr></thead><tbody>${overdueRows}</tbody></table></div>
-      </div>
-      <div class="panel">
-        <div class="panel__header"><h2>Unpaid</h2></div>
-        <div class="table-wrap"><table><thead><tr><th>Order</th><th>Client</th><th>Payment</th><th>Total</th></tr></thead><tbody>${unpaidRows}</tbody></table></div>
-      </div>
-    </div>
-    <div class="grid-2" style="margin-top:1rem;">
-      <div class="panel">
-        <div class="panel__header"><h2>Stale orders</h2></div>
-        <div class="table-wrap"><table><thead><tr><th>Order</th><th>Client</th><th>Idle</th><th>Status</th></tr></thead><tbody>${staleRows}</tbody></table></div>
-      </div>
-      <div class="panel">
-        <div class="panel__header"><h2>Client health</h2></div>
-        <div class="table-wrap"><table><thead><tr><th>Client</th><th>Flags</th><th>Open value</th></tr></thead><tbody>${healthRows}</tbody></table></div>
-      </div>
-    </div>
-    <div class="grid-2" style="margin-top:1rem;">
-      <div class="panel">
-        <div class="panel__header"><h2>Recent orders</h2></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Order</th><th>Client</th><th>Status</th><th>Due</th><th>Total</th></tr></thead>
-            <tbody>
-              ${(d.recentOrders || [])
-                .map(
-                  (o) => `<tr data-order-id="${o.id}">
-                    <td><strong>${escapeHtml(o.orderId)}</strong>${tagBadges(o.tags)}</td>
-                    <td>${escapeHtml(o.clientName)}</td>
-                    <td>${statusBadge(o.status)}</td>
-                    <td>${formatDate(o.dueDate)}${o.daysOverdue ? ` <span class="badge badge--overdue">${o.daysOverdue}d late</span>` : ""}</td>
-                    <td class="money">${money(o.totalCost)}</td>
-                  </tr>`
-                )
-                .join("")}
-            </tbody>
-          </table>
+
+    <section class="section">
+      <div class="section__head">
+        <h2 class="section__title">Needs attention</h2>
+        <div class="segmented">
+          <button type="button" class="segmented__btn${attentionTab === "overdue" ? " is-active" : ""}" data-attention-tab="overdue">Overdue</button>
+          <button type="button" class="segmented__btn${attentionTab === "unpaid" ? " is-active" : ""}" data-attention-tab="unpaid">Unpaid</button>
+          <button type="button" class="segmented__btn${attentionTab === "stale" ? " is-active" : ""}" data-attention-tab="stale">Stale</button>
         </div>
       </div>
-      <div class="panel">
-        <div class="panel__header"><h2>Recent activity</h2></div>
-        <ul class="timeline">${activityItems}</ul>
+      <div class="panel panel--flat">
+        <div class="table-wrap table-wrap--comfortable">
+          <table><thead>${activeAttention.cols}</thead><tbody>${activeAttention.rows}</tbody></table>
+        </div>
+        <div class="section__foot">
+          <button type="button" class="btn btn--ghost btn--tiny" data-dash-action="${attentionTab}">View all in Orders →</button>
+        </div>
       </div>
+    </section>
+
+    <details class="section section--collapsible">
+      <summary class="section__summary">Insights — pipeline, payments, revenue</summary>
+      <div class="grid-3 section__body">
+        <div class="panel panel--flat">
+          <h3 class="panel__subtitle">Pipeline</h3>
+          <div class="pipeline">${pipelineBars(d.pipelineCount || {}, d.pipelineValue || {})}</div>
+        </div>
+        <div class="panel panel--flat">
+          <h3 class="panel__subtitle">Payments</h3>
+          <ul class="snapshot-list">
+            <li><span>Unpaid</span><strong>${pay.unpaid?.count || 0} · ${money(pay.unpaid?.value || 0)}</strong></li>
+            <li><span>Partial</span><strong>${pay.partial?.count || 0} · ${money(pay.partial?.value || 0)}</strong></li>
+            <li><span>Paid (open)</span><strong>${pay.paidOpen?.count || 0} · ${money(pay.paidOpen?.value || 0)}</strong></li>
+          </ul>
+        </div>
+        <div class="panel panel--flat">
+          <h3 class="panel__subtitle">Revenue (90d)</h3>
+          ${miniBarChart(d.revenueChart)}
+        </div>
+      </div>
+    </details>
+
+    <div class="grid-2">
+      <section class="section">
+        <h2 class="section__title">Due dates</h2>
+        <div class="panel panel--flat">
+          <div class="cal-strip">${calendarCells}</div>
+          <p class="section__hint">Click a day to filter orders by due date.</p>
+        </div>
+      </section>
+      <section class="section">
+        <h2 class="section__title">Recent activity</h2>
+        <div class="panel panel--flat">
+          <ul class="timeline timeline--feed">${activityItems}</ul>
+        </div>
+      </section>
     </div>
   `;
+
+  $$("[data-attention-tab]").forEach((btn) => {
+    btn.onclick = () => {
+      state.dashboardAttention = btn.dataset.attentionTab;
+      renderDashboard();
+    };
+  });
 
   $$("#view-dashboard [data-order-id]").forEach((el) => {
     el.style.cursor = "pointer";
     el.onclick = () => showOrderInList(el.dataset.orderId);
-  });
-  $$("#view-dashboard [data-client-id]").forEach((el) => {
-    el.style.cursor = "pointer";
-    el.onclick = () => openClientDetail(el.dataset.clientId);
   });
   $$(".cal-day[data-cal-date]").forEach((el) => {
     if (!el.dataset.calDate) return;
@@ -1151,61 +1132,76 @@ function renderOrders() {
     ? `<button type="button" class="chip is-active" id="clear-due-filter">Due ${formatDate(state.orderFilter.dueDate)} ×</button>`
     : "";
 
+  const viewMode = state.ordersViewMode;
+  const boardActive = viewMode === "board";
+
   const kanbanCols = state.meta.orderStatuses
     .map((status) => {
       const cards = orders
         .filter((o) => o.status === status)
         .map((o) => renderOrderCard(o))
         .join("");
-      return `<div class="kanban__col" data-kanban-status="${escapeHtml(status)}"><h3 class="kanban__title">${escapeHtml(status)}</h3>${cards || `<div class="empty" style="padding:0.5rem;">None</div>`}</div>`;
+      const count = orders.filter((o) => o.status === status).length;
+      return `<div class="kanban__col" data-kanban-status="${escapeHtml(status)}">
+        <div class="kanban__head"><h3 class="kanban__title">${escapeHtml(status)}</h3><span class="kanban__count">${count}</span></div>
+        <div class="kanban__cards">${cards || `<div class="empty empty--inline">None</div>`}</div>
+      </div>`;
     })
     .join("");
 
+  const listSection = `
+    <div class="panel panel--flat">
+      <div class="table-wrap table-wrap--comfortable">
+        <table>
+          <thead><tr><th>Order</th><th>Due</th><th>Status</th><th>Total</th><th></th></tr></thead>
+          <tbody>${orders.length ? orders.map((o) => renderOrderTableRows(o)).join("") : `<tr><td colspan="5" class="empty">No orders match your filters.</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  const boardSection = `<div class="kanban">${kanbanCols}</div>`;
+
   $("#view-orders").innerHTML = `
-    <div class="filters">
-      <input type="search" id="order-search" placeholder="Search orders…" value="${escapeHtml(state.orderFilter.q)}" />
-      <select id="order-status-filter">
-        <option value="">All statuses</option>
-        ${state.meta.orderStatuses.map((s) => `<option value="${s}" ${state.orderFilter.status === s ? "selected" : ""}>${s}</option>`).join("")}
-      </select>
-      <select id="order-client-filter">
-        <option value="">All clients</option>
-        ${clientOptions}
-      </select>
-      <select id="order-tag-filter">
-        <option value="">All tags</option>
-        ${tagOptions}
-      </select>
-      ${dueHint}
+    <div class="toolbar">
+      <div class="toolbar__filters">
+        <input type="search" id="order-search" class="toolbar__search" placeholder="Search orders…" value="${escapeHtml(state.orderFilter.q)}" />
+        <select id="order-status-filter" class="toolbar__select" aria-label="Status">
+          <option value="">All statuses</option>
+          ${state.meta.orderStatuses.map((s) => `<option value="${s}" ${state.orderFilter.status === s ? "selected" : ""}>${s}</option>`).join("")}
+        </select>
+        <select id="order-client-filter" class="toolbar__select" aria-label="Client">
+          <option value="">All clients</option>
+          ${clientOptions}
+        </select>
+        <select id="order-tag-filter" class="toolbar__select" aria-label="Tag">
+          <option value="">All tags</option>
+          ${tagOptions}
+        </select>
+        ${dueHint}
+      </div>
+      <div class="segmented segmented--sm">
+        <button type="button" class="segmented__btn${boardActive ? " is-active" : ""}" data-orders-view="board">Board</button>
+        <button type="button" class="segmented__btn${!boardActive ? " is-active" : ""}" data-orders-view="list">List</button>
+      </div>
     </div>
-    <div class="chips">
+    <div class="chips chips--subtle">
       ${attentionChip("", "All")}
       ${attentionChip("open", "Open")}
       ${attentionChip("overdue", "Overdue")}
       ${attentionChip("unpaid", "Unpaid")}
       ${attentionChip("stale", "Stale")}
     </div>
-    <div class="kanban">${kanbanCols}</div>
-    <div class="panel">
-      <div class="panel__header"><h2>All orders</h2></div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Order ID</th><th>Client</th><th>Received</th><th>Due</th><th>Status</th><th>Payment</th><th>Total</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${
-              orders.length
-                ? orders.map((o) => renderOrderTableRows(o)).join("")
-                : `<tr><td colspan="8" class="empty">No orders match your filters.</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
-    </div>
+    ${boardActive ? boardSection : listSection}
   `;
+
+  $$("[data-orders-view]").forEach((btn) => {
+    btn.onclick = () => {
+      state.ordersViewMode = btn.dataset.ordersView;
+      localStorage.setItem("crm-orders-view", state.ordersViewMode);
+      renderOrders();
+      renderSavedViewsNav();
+    };
+  });
 
   $("#order-search").oninput = (e) => {
     state.orderFilter.q = e.target.value;
@@ -1305,15 +1301,14 @@ function filteredClients() {
 function renderClients() {
   const clients = filteredClients();
   $("#view-clients").innerHTML = `
-    <div class="filters">
-      <input type="search" id="client-search" placeholder="Search clients…" value="${escapeHtml(state.clientFilter.q)}" />
+    <div class="toolbar toolbar--single">
+      <input type="search" id="client-search" class="toolbar__search" placeholder="Search clients…" value="${escapeHtml(state.clientFilter.q)}" />
     </div>
-    <div class="panel">
-      <div class="panel__header"><h2>Client directory</h2></div>
-      <div class="table-wrap">
+    <div class="panel panel--flat">
+      <div class="table-wrap table-wrap--comfortable">
         <table>
           <thead>
-            <tr><th>Name</th><th>Contact</th><th>Open orders</th><th>Open value</th><th></th></tr>
+            <tr><th>Name</th><th>Contact</th><th>Open</th><th>Value</th><th></th></tr>
           </thead>
           <tbody>
             ${
@@ -1323,20 +1318,18 @@ function renderClients() {
                       (c) => `<tr>
                         <td>
                           <strong>${escapeHtml(c.name)}</strong>
-                          ${c.notes ? `<div style="color:var(--muted);font-size:0.82rem;">${escapeHtml(c.notes)}</div>` : ""}
+                          ${c.notes ? `<div class="cell-sub">${escapeHtml(c.notes)}</div>` : ""}
                         </td>
                         <td>
                           ${c.email ? `<div><a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a></div>` : ""}
-                          ${c.phone ? `<div><a href="tel:${escapeHtml(c.phone.replace(/\s/g, ""))}" style="color:var(--muted);">${escapeHtml(c.phone)}</a></div>` : ""}
-                          ${formatAddressDisplay(c) ? `<div style="color:var(--muted);font-size:0.82rem;white-space:pre-line;">${escapeHtml(formatAddressDisplay(c))}</div>` : ""}
+                          ${c.phone ? `<div class="cell-sub"><a href="tel:${escapeHtml(c.phone.replace(/\s/g, ""))}">${escapeHtml(c.phone)}</a></div>` : ""}
                         </td>
                         <td>${c.totalOpenOrders}</td>
                         <td class="money">${money(c.totalOpenValue)}</td>
-                        <td class="row-actions">
-                          <button type="button" class="btn" data-view-client="${c.id}">View</button>
-                          <button type="button" class="btn" data-edit-client="${c.id}">Edit</button>
-                          <button type="button" class="btn" data-view-client-orders="${c.id}">Orders</button>
-                          <button type="button" class="btn btn--danger" data-delete-client="${c.id}">Delete</button>
+                        <td class="row-actions row-actions--compact">
+                          <button type="button" class="btn btn--ghost btn--tiny" data-view-client="${c.id}">View</button>
+                          <button type="button" class="btn btn--ghost btn--tiny" data-edit-client="${c.id}">Edit</button>
+                          <button type="button" class="btn btn--ghost btn--tiny" data-view-client-orders="${c.id}">Orders</button>
                         </td>
                       </tr>`
                     )
