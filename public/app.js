@@ -8,7 +8,8 @@ const state = {
   settings: null,
   savedViews: [],
   activeSavedViewId: "",
-  orderFilter: { q: "", status: "", clientId: "", attention: "", tag: "" },
+  orderFilter: { q: "", status: "", clientId: "", attention: "", tag: "", dueDate: "" },
+  clientFilter: { q: "" },
   searchTimer: null,
 };
 
@@ -353,6 +354,115 @@ function pipelineBars(pipelineCount, pipelineValue) {
     .join("");
 }
 
+function confirmAction(title, message) {
+  return new Promise((resolve) => {
+    const confirmBtn = $("#modal-confirm");
+    openModal(title, `<p class="confirm-message">${escapeHtml(message)}</p>`, null, { hideSave: true, keepConfirm: true });
+    $("#modal-cancel").textContent = "Cancel";
+    confirmBtn.hidden = false;
+    const finish = (ok) => {
+      confirmBtn.hidden = true;
+      $("#modal").close();
+      resolve(ok);
+    };
+    confirmBtn.onclick = () => finish(true);
+    $("#modal-cancel").onclick = () => finish(false);
+    $("#modal-close").onclick = () => finish(false);
+  });
+}
+
+function promptAction(title, label, defaultValue = "") {
+  return new Promise((resolve) => {
+    const confirmBtn = $("#modal-confirm");
+    openModal(
+      title,
+      `<div class="field"><label for="prompt-input">${escapeHtml(label)}</label><input id="prompt-input" type="text" value="${escapeHtml(defaultValue)}" autofocus /></div>`,
+      null,
+      { hideSave: true, keepConfirm: true }
+    );
+    $("#modal-cancel").textContent = "Cancel";
+    confirmBtn.hidden = false;
+    confirmBtn.textContent = "Save";
+    const input = $("#prompt-input");
+    const finish = (ok) => {
+      confirmBtn.hidden = true;
+      confirmBtn.textContent = "Confirm";
+      const value = ok ? input.value.trim() : "";
+      $("#modal").close();
+      resolve(value);
+    };
+    confirmBtn.onclick = () => finish(true);
+    $("#modal-cancel").onclick = () => finish(false);
+    $("#modal-close").onclick = () => finish(false);
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        finish(true);
+      }
+    };
+  });
+}
+
+async function copyOrderLink(orderId) {
+  const { url } = await api(`/api/orders/${orderId}/share-link`, { method: "POST", body: JSON.stringify({}) });
+  await navigator.clipboard.writeText(url);
+  toast("Client link copied");
+}
+
+function allOrderTags() {
+  const set = new Set(state.meta?.orderTagPresets || []);
+  for (const o of state.orders) {
+    for (const t of o.tags || []) set.add(t);
+  }
+  return [...set].sort();
+}
+
+function notifyClientChecked() {
+  const el = $("#detail-notify-client");
+  if (!el) return state.settings?.notifyClientOnStatus !== false;
+  return el.checked;
+}
+
+function wireKanbanDrag() {
+  let draggedId = null;
+  $$(".card[data-order-id]").forEach((card) => {
+    card.draggable = true;
+    card.addEventListener("dragstart", (e) => {
+      draggedId = card.dataset.orderId;
+      card.classList.add("card--dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    card.addEventListener("dragend", () => {
+      card.classList.remove("card--dragging");
+      $$(".kanban__col").forEach((col) => col.classList.remove("kanban__col--over"));
+    });
+  });
+  $$(".kanban__col[data-kanban-status]").forEach((col) => {
+    col.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      col.classList.add("kanban__col--over");
+    });
+    col.addEventListener("dragleave", () => col.classList.remove("kanban__col--over"));
+    col.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      col.classList.remove("kanban__col--over");
+      if (!draggedId) return;
+      const status = col.dataset.kanbanStatus;
+      const order = state.orders.find((o) => o.id === draggedId);
+      if (!order || order.status === status) return;
+      try {
+        await quickOrderPatch(draggedId, {
+          status,
+          notifyClient: state.settings?.notifyClientOnStatus !== false,
+        });
+        toast(`Moved to ${status}`);
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+  });
+}
+
 function toast(msg) {
   const el = $("#toast");
   el.textContent = msg;
@@ -375,6 +485,7 @@ function setView(view) {
     dashboard: ["Dashboard", "At-a-glance pipeline, payments, and follow-ups"],
     orders: ["Orders", "Track status, due dates, and payments"],
     clients: ["Clients", "Contact directory and open order counts"],
+    settings: ["Settings", "Automation, notifications, and daily digest"],
   };
   const [title, subtitle] = titles[view];
   $("#page-title").textContent = title;
@@ -389,6 +500,7 @@ function renderTopbarActions() {
   if (state.view === "dashboard") {
     actions.innerHTML = `
       <button type="button" class="btn" id="digest-preview-btn">Digest preview</button>
+      <button type="button" class="btn" id="digest-send-btn">Send digest</button>
       <button type="button" class="btn btn--primary" id="add-order-dash-btn">+ New order</button>`;
     $("#add-order-dash-btn").onclick = () => openOrderModal();
     $("#digest-preview-btn").onclick = async () => {
@@ -400,6 +512,14 @@ function renderTopbarActions() {
           hideSave: true,
         });
         $("#modal-cancel").textContent = "Close";
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+    $("#digest-send-btn").onclick = async () => {
+      try {
+        const result = await api("/api/digest/send", { method: "POST", body: JSON.stringify({}) });
+        toast(`Digest sent to ${result.to}`);
       } catch (err) {
         toast(err.message);
       }
@@ -458,6 +578,7 @@ function renderCurrentView() {
   if (state.view === "dashboard") renderDashboard();
   if (state.view === "orders") renderOrders();
   if (state.view === "clients") renderClients();
+  if (state.view === "settings") renderSettings();
 }
 
 function renderDashboard() {
@@ -648,9 +769,18 @@ function renderDashboard() {
     el.style.cursor = "pointer";
     el.onclick = () => openClientDetail(el.dataset.clientId);
   });
+  $$(".cal-day[data-cal-date]").forEach((el) => {
+    if (!el.dataset.calDate) return;
+    el.style.cursor = "pointer";
+    el.onclick = () => {
+      state.orderFilter = { q: "", status: "", clientId: "", attention: "", tag: "", dueDate: el.dataset.calDate };
+      state.activeSavedViewId = "";
+      setView("orders");
+    };
+  });
   $$("[data-dash-action]").forEach((btn) => {
     btn.onclick = () => {
-      state.orderFilter = { q: "", status: "", clientId: "", attention: btn.dataset.dashAction, tag: "" };
+      state.orderFilter = { q: "", status: "", clientId: "", attention: btn.dataset.dashAction, tag: "", dueDate: "" };
       state.activeSavedViewId = "";
       setView("orders");
     };
@@ -681,7 +811,7 @@ function renderSavedViewsNav() {
   $$("[data-delete-view]").forEach((btn) => {
     btn.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm("Delete this saved view?")) return;
+      if (!(await confirmAction("Delete saved view", "Remove this saved view?"))) return;
       await api(`/api/saved-views/${btn.dataset.deleteView}`, { method: "DELETE" });
       if (state.activeSavedViewId === btn.dataset.deleteView) state.activeSavedViewId = "";
       await refresh();
@@ -700,16 +830,17 @@ function applySavedView(id) {
     clientId: view.filters?.clientId || "",
     attention: view.filters?.attention || "",
     tag: view.filters?.tag || "",
+    dueDate: view.filters?.dueDate || "",
   };
   setView("orders");
 }
 
 async function saveCurrentView() {
-  const name = prompt("Name this view (e.g. Overdue rush jobs):");
-  if (!name?.trim()) return;
+  const name = await promptAction("Save view", "View name", "My filtered orders");
+  if (!name) return;
   await api("/api/saved-views", {
     method: "POST",
-    body: JSON.stringify({ name: name.trim(), filters: { ...state.orderFilter } }),
+    body: JSON.stringify({ name, filters: { ...state.orderFilter } }),
   });
   await refresh();
   toast("View saved");
@@ -721,6 +852,7 @@ function filteredOrders() {
     if (state.orderFilter.status && o.status !== state.orderFilter.status) return false;
     if (state.orderFilter.clientId && o.clientId !== state.orderFilter.clientId) return false;
     if (state.orderFilter.tag && !(o.tags || []).includes(state.orderFilter.tag)) return false;
+    if (state.orderFilter.dueDate && o.dueDate !== state.orderFilter.dueDate) return false;
     if (state.orderFilter.attention === "overdue" && !(o.isOpen && o.daysOverdue > 0)) return false;
     if (
       state.orderFilter.attention === "unpaid" &&
@@ -747,20 +879,27 @@ function renderOrders() {
   const clientOptions = state.clients
     .map((c) => `<option value="${c.id}" ${state.orderFilter.clientId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`)
     .join("");
+  const tagOptions = allOrderTags()
+    .map((t) => `<option value="${escapeHtml(t)}" ${state.orderFilter.tag === t ? "selected" : ""}>${escapeHtml(t)}</option>`)
+    .join("");
+  const dueHint = state.orderFilter.dueDate
+    ? `<button type="button" class="chip is-active" id="clear-due-filter">Due ${formatDate(state.orderFilter.dueDate)} ×</button>`
+    : "";
 
   const kanbanCols = state.meta.orderStatuses
     .map((status) => {
       const cards = orders
         .filter((o) => o.status === status)
         .map(
-          (o) => `<div class="card" data-order-id="${o.id}">
+          (o) => `<div class="card" data-order-id="${o.id}" draggable="true">
             <div class="card__title">${escapeHtml(o.orderId)}</div>
             <div class="card__meta">${escapeHtml(o.clientName)} · ${money(o.totalCost)}</div>
+            ${o.fulfillmentType === "Pickup" ? `<div class="card__meta"><span class="tag">Pickup</span></div>` : ""}
             ${o.daysOverdue ? `<div class="card__meta"><span class="badge badge--overdue">${o.daysOverdue}d overdue</span></div>` : ""}
           </div>`
         )
         .join("");
-      return `<div class="kanban__col"><h3 class="kanban__title">${escapeHtml(status)}</h3>${cards || `<div class="empty" style="padding:0.5rem;">None</div>`}</div>`;
+      return `<div class="kanban__col" data-kanban-status="${escapeHtml(status)}"><h3 class="kanban__title">${escapeHtml(status)}</h3>${cards || `<div class="empty" style="padding:0.5rem;">None</div>`}</div>`;
     })
     .join("");
 
@@ -775,6 +914,11 @@ function renderOrders() {
         <option value="">All clients</option>
         ${clientOptions}
       </select>
+      <select id="order-tag-filter">
+        <option value="">All tags</option>
+        ${tagOptions}
+      </select>
+      ${dueHint}
     </div>
     <div class="chips">
       ${attentionChip("", "All")}
@@ -808,6 +952,7 @@ function renderOrders() {
                         <td class="money">${money(o.totalCost)}</td>
                         <td class="row-actions">
                           <button type="button" class="btn" data-view-order="${o.id}">View</button>
+                          <button type="button" class="btn" data-copy-order="${o.id}" title="Copy client link">Link</button>
                           <button type="button" class="btn" data-edit-order="${o.id}">Edit</button>
                           <button type="button" class="btn btn--danger" data-delete-order="${o.id}">Delete</button>
                         </td>
@@ -840,6 +985,18 @@ function renderOrders() {
     renderOrders();
     renderSavedViewsNav();
   };
+  $("#order-tag-filter").onchange = (e) => {
+    state.orderFilter.tag = e.target.value;
+    state.activeSavedViewId = "";
+    renderOrders();
+    renderSavedViewsNav();
+  };
+  $("#clear-due-filter")?.addEventListener("click", () => {
+    state.orderFilter.dueDate = "";
+    state.activeSavedViewId = "";
+    renderOrders();
+    renderSavedViewsNav();
+  });
   $$(".chip[data-attention]").forEach((chip) => {
     chip.onclick = () => {
       state.orderFilter.attention = chip.dataset.attention;
@@ -848,6 +1005,7 @@ function renderOrders() {
       renderSavedViewsNav();
     };
   });
+  wireKanbanDrag();
 }
 
 function handleOrdersViewClick(e) {
@@ -863,11 +1021,17 @@ function handleOrdersViewClick(e) {
     openOrderModal(editBtn.dataset.editOrder);
     return;
   }
+  const copyBtn = e.target.closest("[data-copy-order]");
+  if (copyBtn) {
+    e.preventDefault();
+    copyOrderLink(copyBtn.dataset.copyOrder).catch((err) => toast(err.message));
+    return;
+  }
   const deleteBtn = e.target.closest("[data-delete-order]");
   if (deleteBtn) {
     e.preventDefault();
     (async () => {
-      if (!confirm("Delete this order?")) return;
+      if (!(await confirmAction("Delete order", "Delete this order permanently?"))) return;
       await api(`/api/orders/${deleteBtn.dataset.deleteOrder}`, { method: "DELETE" });
       toast("Order deleted");
       await refresh();
@@ -880,8 +1044,21 @@ function handleOrdersViewClick(e) {
   }
 }
 
+function filteredClients() {
+  const q = state.clientFilter.q.trim().toLowerCase();
+  if (!q) return state.clients;
+  return state.clients.filter((c) => {
+    const hay = [c.name, c.firstName, c.lastName, c.email, c.phone, c.address, c.notes].join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+}
+
 function renderClients() {
+  const clients = filteredClients();
   $("#view-clients").innerHTML = `
+    <div class="filters">
+      <input type="search" id="client-search" placeholder="Search clients…" value="${escapeHtml(state.clientFilter.q)}" />
+    </div>
     <div class="panel">
       <div class="panel__header"><h2>Client directory</h2></div>
       <div class="table-wrap">
@@ -891,8 +1068,8 @@ function renderClients() {
           </thead>
           <tbody>
             ${
-              state.clients.length
-                ? state.clients
+              clients.length
+                ? clients
                     .map(
                       (c) => `<tr>
                         <td>
@@ -900,8 +1077,8 @@ function renderClients() {
                           ${c.notes ? `<div style="color:var(--muted);font-size:0.82rem;">${escapeHtml(c.notes)}</div>` : ""}
                         </td>
                         <td>
-                          ${c.email ? `<div>${escapeHtml(c.email)}</div>` : ""}
-                          ${c.phone ? `<div style="color:var(--muted);">${escapeHtml(c.phone)}</div>` : ""}
+                          ${c.email ? `<div><a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a></div>` : ""}
+                          ${c.phone ? `<div><a href="tel:${escapeHtml(c.phone.replace(/\s/g, ""))}" style="color:var(--muted);">${escapeHtml(c.phone)}</a></div>` : ""}
                           ${formatAddressDisplay(c) ? `<div style="color:var(--muted);font-size:0.82rem;white-space:pre-line;">${escapeHtml(formatAddressDisplay(c))}</div>` : ""}
                         </td>
                         <td>${c.totalOpenOrders}</td>
@@ -915,13 +1092,18 @@ function renderClients() {
                       </tr>`
                     )
                     .join("")
-                : `<tr><td colspan="5" class="empty">No clients yet. Add your first client.</td></tr>`
+                : `<tr><td colspan="5" class="empty">${state.clients.length ? "No clients match your search." : "No clients yet. Add your first client."}</td></tr>`
             }
           </tbody>
         </table>
       </div>
     </div>
   `;
+
+  $("#client-search").oninput = (e) => {
+    state.clientFilter.q = e.target.value;
+    renderClients();
+  };
 
   $$("[data-edit-client]").forEach((btn) => {
     btn.onclick = () => openClientModal(btn.dataset.editClient);
@@ -937,12 +1119,111 @@ function renderClients() {
   });
   $$("[data-delete-client]").forEach((btn) => {
     btn.onclick = async () => {
-      if (!confirm("Delete this client and all their orders?")) return;
+      if (!(await confirmAction("Delete client", "Delete this client and all their orders?"))) return;
       await api(`/api/clients/${btn.dataset.deleteClient}`, { method: "DELETE" });
       toast("Client deleted");
       await refresh();
     };
   });
+}
+
+function renderSettings() {
+  const s = state.settings || {};
+  const meta = state.meta || {};
+  const cronUrl = `${location.origin}/api/cron/digest`;
+  $("#view-settings").innerHTML = `
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel__header"><h2>Daily digest</h2></div>
+        <div class="settings-form">
+          <div class="field">
+            <label for="settings-digest-email">Digest email</label>
+            <input id="settings-digest-email" type="email" value="${escapeHtml(s.digestEmail || "")}" placeholder="you@example.com" />
+          </div>
+          <p class="field-hint">Used when you click Send digest or when a scheduled cron job runs.</p>
+          <div class="settings-actions">
+            <button type="button" class="btn" id="settings-preview-digest">Preview</button>
+            <button type="button" class="btn btn--primary" id="settings-send-digest">Send now</button>
+          </div>
+          <ul class="settings-status">
+            <li>SMTP: ${meta.smtpConfigured ? "✓ configured" : "✗ not configured"}</li>
+            <li>Cron secret: ${meta.cronConfigured ? "✓ set" : "✗ set CRM_CRON_SECRET on server"}</li>
+          </ul>
+          ${
+            meta.cronConfigured
+              ? `<pre class="settings-cron">curl -X POST "${cronUrl}" -H "x-cron-secret: YOUR_SECRET"</pre>
+                 <p class="field-hint">Schedule that daily on Render Cron Jobs or any scheduler.</p>`
+              : ""
+          }
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2>Notifications</h2></div>
+        <div class="settings-form">
+          <label class="settings-check">
+            <input type="checkbox" id="settings-browser-notify" ${s.browserNotifications !== false ? "checked" : ""} />
+            Browser alerts for overdue orders
+          </label>
+          <label class="settings-check">
+            <input type="checkbox" id="settings-client-notify" ${s.notifyClientOnStatus !== false ? "checked" : ""} />
+            Email clients when order reaches Ready, Shipped, or Delivered
+          </label>
+          <p class="field-hint">Client emails require SMTP and a client email address on the order.</p>
+          <button type="button" class="btn btn--primary" id="settings-save">Save settings</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:1rem;">
+      <div class="panel__header"><h2>Quick tips</h2></div>
+      <ul class="settings-tips">
+        <li>Drag orders on the Kanban board to change status quickly.</li>
+        <li>Click a date on the dashboard calendar to filter orders due that day.</li>
+        <li>Press <kbd>/</kbd> to focus search, <kbd>Esc</kbd> to close dialogs.</li>
+        <li>Use Ship vs Pickup on new orders — Ready actions adapt automatically.</li>
+      </ul>
+    </div>
+  `;
+
+  $("#settings-save").onclick = async () => {
+    try {
+      state.settings = await api("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          digestEmail: $("#settings-digest-email").value.trim(),
+          browserNotifications: $("#settings-browser-notify").checked,
+          notifyClientOnStatus: $("#settings-client-notify").checked,
+        }),
+      });
+      toast("Settings saved");
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  $("#settings-preview-digest").onclick = async () => {
+    try {
+      const res = await fetch("/api/digest/preview", { credentials: "include" });
+      const text = await res.text();
+      openModal("Daily digest preview", `<pre class="digest-preview">${escapeHtml(text)}</pre>`, null, {
+        wide: true,
+        hideSave: true,
+      });
+      $("#modal-cancel").textContent = "Close";
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  $("#settings-send-digest").onclick = async () => {
+    try {
+      const email = $("#settings-digest-email").value.trim();
+      const result = await api("/api/digest/send", {
+        method: "POST",
+        body: JSON.stringify({ to: email || undefined }),
+      });
+      toast(`Digest sent to ${result.to}`);
+    } catch (err) {
+      toast(err.message);
+    }
+  };
 }
 
 function openModal(title, bodyHtml, onSave, options = {}) {
@@ -962,6 +1243,8 @@ function openModal(title, bodyHtml, onSave, options = {}) {
     saveBtn.type = "submit";
     saveBtn.textContent = options.saveLabel || "Save";
   }
+  const confirmBtn = $("#modal-confirm");
+  if (confirmBtn && !options.keepConfirm) confirmBtn.hidden = true;
   const dialog = $("#modal");
   if (!dialog) throw new Error("Modal UI failed to load. Hard-refresh the page.");
   if (dialog.open) dialog.close();
@@ -991,14 +1274,23 @@ async function openOrderDetail(id) {
   const flow = state.meta.orderStatuses;
   const next = flow[flow.indexOf(order.status) + 1];
   const atReady = order.status === "Ready";
+  const isPickup = order.fulfillmentType === "Pickup";
+  const canNotify = state.meta?.smtpConfigured && state.settings?.notifyClientOnStatus !== false;
+  const notifyRow =
+    canNotify && ["Ready", "In Progress", "New", "Shipped"].includes(order.status)
+      ? `<label class="notify-toggle"><input type="checkbox" id="detail-notify-client" checked /> Email client on status change</label>`
+      : "";
   const advanceBtn =
     next && !atReady
       ? `<button type="button" class="btn btn--primary" id="detail-advance">Advance to ${escapeHtml(next)}</button>`
       : "";
   const readyActions = atReady
-      ? `<button type="button" class="btn btn--primary" id="detail-ship">Mark shipped</button>
+    ? isPickup
+      ? `<button type="button" class="btn btn--primary" id="detail-pickup">Mark picked up</button>
+         <button type="button" class="btn" id="detail-ship">Mark shipped anyway</button>`
+      : `<button type="button" class="btn btn--primary" id="detail-ship">Mark shipped</button>
          <button type="button" class="btn" id="detail-pickup">Mark picked up</button>`
-      : "";
+    : "";
   const timeline =
     activity.length > 0
       ? activity
@@ -1022,12 +1314,14 @@ async function openOrderDetail(id) {
       <div><span class="detail-label">Total</span><strong class="money">${money(order.totalCost)}</strong></div>
       <div><span class="detail-label">Received</span>${formatDate(order.dateReceived)}</div>
       <div><span class="detail-label">Due</span>${formatDate(order.dueDate)}${order.daysOverdue ? ` <span class="badge badge--overdue">${order.daysOverdue}d late</span>` : ""}</div>
+      <div><span class="detail-label">Fulfillment</span><strong>${escapeHtml(order.fulfillmentType || "Ship")}</strong></div>
       ${order.invoiceNumber ? `<div><span class="detail-label">Invoice #</span>${escapeHtml(order.invoiceNumber)}</div>` : ""}
       ${order.poNumber ? `<div><span class="detail-label">PO #</span>${escapeHtml(order.poNumber)}</div>` : ""}
     </div>
     ${order.tags?.length ? `<div class="detail-block"><span class="detail-label">Tags</span><div>${tagBadges(order.tags)}</div></div>` : ""}
     ${order.items ? `<div class="detail-block"><span class="detail-label">Items</span><p>${escapeHtml(order.items)}</p></div>` : ""}
     ${order.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(order.notes)}</p></div>` : ""}
+    ${notifyRow}
     <div class="detail-actions">
       ${advanceBtn}
       ${readyActions}
@@ -1054,22 +1348,22 @@ async function openOrderDetail(id) {
 
   if (next && !atReady) {
     $("#detail-advance").onclick = async () => {
-      await quickOrderPatch(id, { advanceStatus: true });
-      toast(`Moved to ${next}`);
+      const result = await quickOrderPatch(id, { advanceStatus: true, notifyClient: notifyClientChecked() });
+      toast(result.clientNotified ? `Moved to ${next} · client emailed` : `Moved to ${next}`);
       $("#modal").close();
       openOrderDetail(id);
     };
   }
   if (atReady) {
     $("#detail-ship").onclick = async () => {
-      await quickOrderPatch(id, { status: "Shipped" });
-      toast("Marked as shipped");
+      const result = await quickOrderPatch(id, { status: "Shipped", notifyClient: notifyClientChecked() });
+      toast(result.clientNotified ? "Marked as shipped · client emailed" : "Marked as shipped");
       $("#modal").close();
       openOrderDetail(id);
     };
     $("#detail-pickup").onclick = async () => {
-      await quickOrderPatch(id, { status: "Delivered" });
-      toast("Marked as picked up");
+      const result = await quickOrderPatch(id, { status: "Delivered", notifyClient: notifyClientChecked() });
+      toast(result.clientNotified ? "Marked as picked up · client emailed" : "Marked as picked up");
       $("#modal").close();
       openOrderDetail(id);
     };
@@ -1096,7 +1390,7 @@ async function openOrderDetail(id) {
     }
   };
   $("#detail-rotate-link").onclick = async () => {
-    if (!confirm("Generate a new link? The old link will stop working.")) return;
+    if (!(await confirmAction("New tracking link", "Generate a new link? The old link will stop working."))) return;
     try {
       const { url } = await api(`/api/orders/${id}/share-link`, {
         method: "POST",
@@ -1123,8 +1417,9 @@ async function openOrderDetail(id) {
 }
 
 async function quickOrderPatch(orderId, payload) {
-  await api(`/api/orders/${orderId}/quick`, { method: "PATCH", body: JSON.stringify(payload) });
+  const data = await api(`/api/orders/${orderId}/quick`, { method: "PATCH", body: JSON.stringify(payload) });
   await refresh();
+  return data;
 }
 
 async function openClientDetail(id) {
@@ -1146,8 +1441,8 @@ async function openClientDetail(id) {
 
   const body = `
     <div class="detail-grid">
-      <div><span class="detail-label">Email</span>${escapeHtml(data.email || "—")}</div>
-      <div><span class="detail-label">Phone</span>${escapeHtml(data.phone || "—")}</div>
+      <div><span class="detail-label">Email</span>${data.email ? `<a href="mailto:${escapeHtml(data.email)}">${escapeHtml(data.email)}</a>` : "—"}</div>
+      <div><span class="detail-label">Phone</span>${data.phone ? `<a href="tel:${escapeHtml(data.phone.replace(/\s/g, ""))}">${escapeHtml(data.phone)}</a>` : "—"}</div>
       <div><span class="detail-label">Open orders</span><strong>${data.totalOpenOrders}</strong></div>
       <div><span class="detail-label">Open value</span><strong class="money">${money(data.totalOpenValue)}</strong></div>
     </div>
@@ -1326,12 +1621,14 @@ function openOrderModal(id = null, presetClientId = null) {
     </div>
     ${
       existing
-        ? `<div class="field-row">
-            ${field("invoiceNumber", "Invoice #", existing.invoiceNumber || "")}
-            ${field("poNumber", "PO #", existing.poNumber || "")}
-          </div>`
+        ? field("poNumber", "PO #", existing.poNumber || "")
         : field("poNumber", "PO #", "")
     }
+    <div class="field-row">
+      ${field("fulfillmentType", "Fulfillment", existing?.fulfillmentType || "Ship", "select", {
+        choices: state.meta?.fulfillmentTypes || ["Ship", "Pickup"],
+      })}
+    </div>
     <div class="field">
       <label for="tags">Tags <span class="field-hint">comma-separated</span></label>
       <input id="tags" name="tags" type="text" value="${escapeHtml(existing?.tagsLabel || (Array.isArray(existing?.tags) ? existing.tags.join(", ") : existing?.tags || ""))}" />
@@ -1495,6 +1792,7 @@ function wireGlobalSearch() {
 }
 
 function maybeNotifyOverdue() {
+  if (state.settings?.browserNotifications === false) return;
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const n = state.dashboard?.overdueOrders || 0;
   if (n <= 0) return;
@@ -1505,6 +1803,7 @@ function maybeNotifyOverdue() {
 }
 
 async function requestNotifications() {
+  if (state.settings?.browserNotifications === false) return;
   if (!("Notification" in window)) return;
   if (Notification.permission === "default") {
     const perm = await Notification.requestPermission();
@@ -1526,6 +1825,19 @@ function wireChrome() {
   registerServiceWorker();
   requestNotifications();
   $("#view-orders").addEventListener("click", handleOrdersViewClick);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      const dialog = $("#modal");
+      if (dialog?.open) dialog.close();
+      return;
+    }
+    if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      e.preventDefault();
+      $("#global-search")?.focus();
+    }
+  });
   $("#modal-close").onclick = () => $("#modal").close();
   $("#modal-cancel").onclick = () => $("#modal").close();
   $("#login-form").onsubmit = async (e) => {

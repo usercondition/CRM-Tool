@@ -24,11 +24,14 @@ Without `DATABASE_URL`, data is stored in `data/store.json`. Without `CRM_PASSWO
 - **Saved views** — save order filter combinations from the Orders sidebar
 - **Clients & orders** — full CRUD, Kanban, search and filters (Open / Overdue / Unpaid / Stale)
 - **Order fields** — tags (`rush`, `repeat`, `warranty` presets), invoice #, PO #
-- **Order detail** — activity timeline, quick status advance, mark paid, add notes
+- **Order detail** — activity timeline, quick status advance, mark paid, add notes, email-client toggle
+- **Kanban drag-and-drop** — move orders between status columns
+- **Settings** — digest email, browser notifications, client email toggles
 - **Client tracking link** — share a read-only `/track/…` URL; clients can refresh or get live updates every 30s (no login)
 - **Client detail** — contact summary and full order history per client
 - **CSV export** — includes tags, invoice, and PO columns
-- **Daily digest** — preview in app; email via SMTP + `CRM_DIGEST_EMAIL`
+- **Daily digest** — preview or send from Dashboard/Settings; schedule via `/api/cron/digest` + `CRM_CRON_SECRET`
+- **Client status emails** — optional SMTP emails when orders reach Ready, Shipped, or Delivered
 - **PWA** — installable with offline static caching (`manifest` + service worker)
 - **Browser notifications** — optional alert when overdue orders exist (after permission)
 - **Password login** — enable with `CRM_PASSWORD` (required for public hosting)
@@ -58,8 +61,9 @@ Without `DATABASE_URL`, data is stored in `data/store.json`. Without `CRM_PASSWO
 | `CRM_PASSWORD` | Yes (production) | Single shared login password |
 | `CRM_SESSION_SECRET` | No | Cookie signing secret (defaults to `CRM_PASSWORD`) |
 | `DATABASE_URL` | No (yes on Render) | PostgreSQL connection string |
-| `CRM_DIGEST_EMAIL` | No | Default recipient for digest emails |
-| `SMTP_*` | No | SMTP settings to send digest email |
+| `CRM_DIGEST_EMAIL` | No | Default digest recipient (also editable in Settings) |
+| `CRM_CRON_SECRET` | No | Secret for scheduled `POST /api/cron/digest` |
+| `SMTP_*` | No | SMTP for digest and client status emails |
 | `STALE_ORDER_DAYS` | No | Days without activity before an order is stale (default 7) |
 | `PORT` | No | Server port (Render sets automatically) |
 
@@ -81,6 +85,7 @@ See `.env.example` for local development.
 | DELETE | `/api/saved-views/:id` | Delete a saved view |
 | GET | `/api/digest/preview` | Plain-text daily digest |
 | POST | `/api/digest/send` | Send digest email (requires SMTP) |
+| POST | `/api/cron/digest` | Scheduled digest (header `x-cron-secret: CRM_CRON_SECRET`) |
 | GET | `/api/export/clients.csv` | Export clients |
 | GET | `/api/export/orders.csv` | Export orders |
 | GET/POST | `/api/clients` | List or create clients |
@@ -102,5 +107,7 @@ Status: `New` → `In Progress` → `Ready` → `Shipped` → `Delivered`
 `Ready` means work is complete and the order is waiting for fulfillment. Use **Mark shipped** or **Mark picked up** from the order detail to finish local pickup orders without going through Shipped.
 
 Payment: `Unpaid`, `Partial`, `Paid`, `Refunded`
+
+Fulfillment: `Ship` or `Pickup` (pickup orders prioritize **Mark picked up** at Ready)
 
 Tag presets: `rush`, `repeat`, `warranty` (comma-separated custom tags also supported)

@@ -14,6 +14,7 @@ const {
 const {
   ORDER_STATUSES,
   PAYMENT_STATUSES,
+  FULFILLMENT_TYPES,
   enrichClient,
   validateClient,
   validateOrder,
@@ -32,6 +33,7 @@ const {
   searchAll,
 } = require("./lib/analytics");
 const { sendDigestEmail, buildDigestText, smtpConfigured } = require("./lib/digest");
+const { sendClientStatusEmail } = require("./lib/clientNotify");
 const { buildPublicOrderView, publicTrackUrl } = require("./lib/publicOrder");
 const { nextStatus } = require("./lib/activity");
 
@@ -150,7 +152,35 @@ function normalizeOrderInput(body, existing = null) {
     invoiceNumber:
       body.invoiceNumber !== undefined ? String(body.invoiceNumber).trim() : existing?.invoiceNumber || "",
     poNumber: body.poNumber !== undefined ? String(body.poNumber).trim() : existing?.poNumber || "",
+    fulfillmentType:
+      body.fulfillmentType !== undefined
+        ? body.fulfillmentType
+        : existing?.fulfillmentType || "Ship",
   };
+}
+
+async function maybeNotifyClient(store, req, before, after, notifyClient) {
+  if (notifyClient === false || before.status === after.status) return null;
+  const settings = await store.getSettings();
+  if (!settings.notifyClientOnStatus) return null;
+  const client = await store.getClient(after.clientId);
+  if (!client?.email) return null;
+  const token = await store.ensurePublicToken(after.id);
+  return sendClientStatusEmail({
+    order: after,
+    client,
+    oldStatus: before.status,
+    newStatus: after.status,
+    trackUrl: publicTrackUrl(req, token),
+  });
+}
+
+function verifyCronSecret(req) {
+  const secret = String(process.env.CRM_CRON_SECRET || "").trim();
+  if (!secret) return false;
+  const header = String(req.headers["x-cron-secret"] || "").trim();
+  const query = new URL(req.url, `http://${req.headers.host}`).searchParams.get("secret") || "";
+  return header === secret || query === secret;
 }
 
 async function startServer() {
@@ -226,12 +256,14 @@ async function startServer() {
           sendJson(res, 200, {
             orderStatuses: ORDER_STATUSES,
             paymentStatuses: PAYMENT_STATUSES,
+            fulfillmentTypes: FULFILLMENT_TYPES,
             orderTagPresets: ORDER_TAG_PRESETS,
             staleOrderDays: STALE_DAYS,
             authRequired: isAuthEnabled(),
             storage: store.mode,
             digestEmailConfigured: Boolean(process.env.CRM_DIGEST_EMAIL),
             smtpConfigured: smtpConfigured(),
+            cronConfigured: Boolean(String(process.env.CRM_CRON_SECRET || "").trim()),
             googleMapsApiKey: String(process.env.GOOGLE_MAPS_API_KEY || "").trim(),
             addressAutocomplete: String(process.env.GOOGLE_MAPS_API_KEY || "").trim() ? "google" : "nominatim",
             usStates: US_STATES,
@@ -267,6 +299,8 @@ async function startServer() {
           const body = await readBody(req);
           const partial = {};
           if (body?.digestEmail !== undefined) partial.digestEmail = String(body.digestEmail).trim();
+          if (body?.notifyClientOnStatus !== undefined) partial.notifyClientOnStatus = Boolean(body.notifyClientOnStatus);
+          if (body?.browserNotifications !== undefined) partial.browserNotifications = Boolean(body.browserNotifications);
           sendJson(res, 200, await store.saveSettings(partial));
           return;
         }
@@ -306,13 +340,30 @@ async function startServer() {
 
         if (pathname === "/api/digest/send" && req.method === "POST") {
           const body = await readBody(req);
+          const settings = await store.getSettings();
           const analytics = await buildDashboard(store);
-          const result = await sendDigestEmail(analytics, body?.to);
+          const result = await sendDigestEmail(analytics, body?.to || settings.digestEmail);
           if (!result.ok) {
             sendJson(res, result.preview ? 503 : 400, result);
             return;
           }
           sendJson(res, 200, result);
+          return;
+        }
+
+        if (pathname === "/api/cron/digest" && req.method === "POST") {
+          if (!verifyCronSecret(req)) {
+            sendJson(res, 401, { error: "Invalid cron secret." });
+            return;
+          }
+          const settings = await store.getSettings();
+          const analytics = await buildDashboard(store);
+          const result = await sendDigestEmail(analytics, settings.digestEmail);
+          if (!result.ok) {
+            sendJson(res, result.preview ? 503 : 400, result);
+            return;
+          }
+          sendJson(res, 200, { ...result, cron: true });
           return;
         }
 
@@ -582,9 +633,14 @@ async function startServer() {
             sendJson(res, 400, { error: "No changes requested." });
             return;
           }
+          const notifyClient = body?.notifyClient !== false;
           const { clientsById, lastActivityByOrder } = await loadEnrichedData(store);
           const updated = await store.updateOrder(id, patch);
-          sendJson(res, 200, enrichOrderMetrics(updated, clientsById, lastActivityByOrder));
+          const notifyResult = await maybeNotifyClient(store, req, existing, updated, notifyClient);
+          sendJson(res, 200, {
+            ...enrichOrderMetrics(updated, clientsById, lastActivityByOrder),
+            clientNotified: notifyResult?.ok || false,
+          });
           return;
         }
 
@@ -621,6 +677,8 @@ async function startServer() {
               return;
             }
             const updated = await store.updateOrder(id, normalizeOrderInput(body, existing));
+            const notifyClient = body?.notifyClient !== false;
+            await maybeNotifyClient(store, req, existing, updated, notifyClient);
             sendJson(res, 200, enrichOrderMetrics(updated, clientsById, {}));
             return;
           }

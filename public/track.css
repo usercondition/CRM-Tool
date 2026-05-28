@@ -115,6 +115,13 @@ body {
   gap: 0.45rem;
 }
 
+.track__status-msg {
+  margin: 0.85rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
 .status,
 .payment {
   display: inline-block;

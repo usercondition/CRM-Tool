@@ -80,6 +80,7 @@ function render(order) {
         <span class="payment payment--${escapeHtml(order.paymentStatus.toLowerCase())}">${escapeHtml(order.paymentStatus)}</span>
         ${order.daysOverdue ? `<span class="status status--late">${order.daysOverdue} days past due</span>` : ""}
       </div>
+      ${order.statusMessage ? `<p class="track__status-msg">${escapeHtml(order.statusMessage)}</p>` : ""}
     </section>
     <section class="track__grid">
       <div class="track__card">
