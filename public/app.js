@@ -10,6 +10,8 @@ const state = {
   activeSavedViewId: "",
   orderFilter: { q: "", status: "", clientId: "", attention: "", tag: "", dueDate: "" },
   clientFilter: { q: "" },
+  expandedOrderId: "",
+  orderActivityCache: {},
   searchTimer: null,
 };
 
@@ -417,15 +419,277 @@ function allOrderTags() {
   return [...set].sort();
 }
 
-function notifyClientChecked() {
-  const el = $("#detail-notify-client");
+function notifyClientChecked(root = document) {
+  const el = root.querySelector("#detail-notify-client");
   if (!el) return state.settings?.notifyClientOnStatus !== false;
   return el.checked;
 }
 
+function buildOrderDetailPanel(order, activity) {
+  const flow = state.meta.orderStatuses;
+  const next = flow[flow.indexOf(order.status) + 1];
+  const atReady = order.status === "Ready";
+  const isPickup = order.fulfillmentType === "Pickup";
+  const canNotify = state.meta?.smtpConfigured && state.settings?.notifyClientOnStatus !== false;
+  const notifyRow =
+    canNotify && ["Ready", "In Progress", "New", "Shipped"].includes(order.status)
+      ? `<label class="notify-toggle"><input type="checkbox" id="detail-notify-client" checked /> Email client on status change</label>`
+      : "";
+  const advanceBtn =
+    next && !atReady
+      ? `<button type="button" class="btn btn--primary" id="detail-advance">Advance to ${escapeHtml(next)}</button>`
+      : "";
+  const readyActions = atReady
+    ? isPickup
+      ? `<button type="button" class="btn btn--primary" id="detail-pickup">Mark picked up</button>
+         <button type="button" class="btn" id="detail-ship">Mark shipped anyway</button>`
+      : `<button type="button" class="btn btn--primary" id="detail-ship">Mark shipped</button>
+         <button type="button" class="btn" id="detail-pickup">Mark picked up</button>`
+    : "";
+  const timeline =
+    activity.length > 0
+      ? activity
+          .map(
+            (a) => `<li class="timeline__item">
+              <span class="timeline__icon" aria-hidden="true">${activityIcon(a.type)}</span>
+              <div>
+                <div class="timeline__title">${escapeHtml(a.message)}</div>
+                <div class="timeline__meta">${formatDateTime(a.createdAt)}</div>
+              </div>
+            </li>`
+          )
+          .join("")
+      : `<li class="timeline__item timeline__item--empty">No activity yet.</li>`;
+
+  return `
+    <div class="order-detail-panel__head">
+      <span class="order-detail-panel__title">${escapeHtml(order.orderId)}</span>
+      <button type="button" class="btn btn--ghost btn--tiny" data-collapse-order="${order.id}">Close</button>
+    </div>
+    <div class="detail-grid">
+      <div><span class="detail-label">Client</span><strong>${escapeHtml(order.clientName)}</strong></div>
+      <div><span class="detail-label">Status</span>${statusBadge(order.status)}</div>
+      <div><span class="detail-label">Payment</span>${paymentBadge(order.paymentStatus)}</div>
+      <div><span class="detail-label">Total</span><strong class="money">${money(order.totalCost)}</strong></div>
+      <div><span class="detail-label">Received</span>${formatDate(order.dateReceived)}</div>
+      <div><span class="detail-label">Due</span>${formatDate(order.dueDate)}${order.daysOverdue ? ` <span class="badge badge--overdue">${order.daysOverdue}d late</span>` : ""}</div>
+      <div><span class="detail-label">Fulfillment</span><strong>${escapeHtml(order.fulfillmentType || "Ship")}</strong></div>
+      ${order.invoiceNumber ? `<div><span class="detail-label">Invoice #</span>${escapeHtml(order.invoiceNumber)}</div>` : ""}
+      ${order.poNumber ? `<div><span class="detail-label">PO #</span>${escapeHtml(order.poNumber)}</div>` : ""}
+    </div>
+    ${order.tags?.length ? `<div class="detail-block"><span class="detail-label">Tags</span><div>${tagBadges(order.tags)}</div></div>` : ""}
+    ${order.items ? `<div class="detail-block"><span class="detail-label">Items</span><p>${escapeHtml(order.items)}</p></div>` : ""}
+    ${order.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(order.notes)}</p></div>` : ""}
+    ${notifyRow}
+    <div class="detail-actions">
+      ${advanceBtn}
+      ${readyActions}
+      ${order.paymentStatus !== "Paid" ? `<button type="button" class="btn" id="detail-mark-paid">Mark paid</button>` : ""}
+      <button type="button" class="btn" id="detail-share">Copy client link</button>
+      <button type="button" class="btn btn--ghost" id="detail-rotate-link" title="Invalidate old links">New link</button>
+      <button type="button" class="btn" id="detail-edit">Edit order</button>
+    </div>
+    <div class="detail-block">
+      <span class="detail-label">Activity</span>
+      <ul class="timeline timeline--compact">${timeline}</ul>
+    </div>
+    <div class="detail-note">
+      <label for="detail-note-input">Add note</label>
+      <div class="detail-note__row">
+        <input id="detail-note-input" type="text" placeholder="Call client, shipped via UPS…" />
+        <button type="button" class="btn btn--primary" id="detail-add-note">Add</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOrderCard(order) {
+  const expanded = state.expandedOrderId === order.id;
+  const activity = state.orderActivityCache[order.id] || [];
+  return `<div class="card${expanded ? " card--open" : ""}" data-order-id="${order.id}"${expanded ? "" : ' draggable="true"'}>
+    <div class="card__summary">
+      <div class="card__head">
+        <div class="card__title">${escapeHtml(order.orderId)}</div>
+        <span class="card__chevron" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+      </div>
+      <div class="card__meta">${escapeHtml(order.clientName)} · ${money(order.totalCost)}</div>
+      ${order.fulfillmentType === "Pickup" ? `<div class="card__meta"><span class="tag">Pickup</span></div>` : ""}
+      ${order.daysOverdue ? `<div class="card__meta"><span class="badge badge--overdue">${order.daysOverdue}d overdue</span></div>` : ""}
+    </div>
+    ${
+      expanded
+        ? `<div class="order-detail-panel" data-order-id="${order.id}">${buildOrderDetailPanel(order, activity)}</div>`
+        : ""
+    }
+  </div>`;
+}
+
+function renderOrderTableRows(order) {
+  const expanded = state.expandedOrderId === order.id;
+  const activity = state.orderActivityCache[order.id] || [];
+  const summaryRow = `<tr class="order-row${expanded ? " order-row--open" : ""}" data-order-id="${order.id}">
+    <td><strong>${escapeHtml(order.orderId)}</strong><div style="color:var(--muted);font-size:0.82rem;">${escapeHtml(order.items || "")}</div>${tagBadges(order.tags)}</td>
+    <td>${escapeHtml(order.clientName)}</td>
+    <td>${formatDate(order.dateReceived)}</td>
+    <td>${formatDate(order.dueDate)}${order.daysOverdue ? `<div><span class="badge badge--overdue">${order.daysOverdue}d late</span></div>` : ""}</td>
+    <td>${statusBadge(order.status)}</td>
+    <td>${escapeHtml(order.paymentStatus)}</td>
+    <td class="money">${money(order.totalCost)}</td>
+    <td class="row-actions">
+      <button type="button" class="btn${expanded ? " btn--primary" : ""}" data-toggle-order="${order.id}">${expanded ? "Hide" : "Details"}</button>
+      <button type="button" class="btn" data-copy-order="${order.id}" title="Copy client link">Link</button>
+      <button type="button" class="btn" data-edit-order="${order.id}">Edit</button>
+      <button type="button" class="btn btn--danger" data-delete-order="${order.id}">Delete</button>
+    </td>
+  </tr>`;
+  const detailRow = expanded
+    ? `<tr class="order-detail-row" data-order-detail-for="${order.id}">
+        <td colspan="8"><div class="order-detail-panel order-detail-panel--table" data-order-id="${order.id}">${buildOrderDetailPanel(order, activity)}</div></td>
+      </tr>`
+    : "";
+  return summaryRow + detailRow;
+}
+
+async function refreshExpandedOrder(id) {
+  delete state.orderActivityCache[id];
+  try {
+    state.orderActivityCache[id] = await api(`/api/orders/${id}/activity`);
+  } catch {
+    state.orderActivityCache[id] = [];
+  }
+  state.expandedOrderId = id;
+  if (state.view === "orders") renderOrders();
+  wireOrderDetailPanel(id);
+}
+
+function wireOrderDetailPanel(id) {
+  const root = $(`.order-detail-panel[data-order-id="${id}"]`);
+  if (!root) return;
+  const q = (sel) => root.querySelector(sel);
+  const order = state.orders.find((o) => o.id === id);
+  if (!order) return;
+  const flow = state.meta.orderStatuses;
+  const next = flow[flow.indexOf(order.status) + 1];
+  const atReady = order.status === "Ready";
+
+  q("[data-collapse-order]")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    state.expandedOrderId = "";
+    renderOrders();
+  });
+
+  q("#detail-advance")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const result = await quickOrderPatch(id, { advanceStatus: true, notifyClient: notifyClientChecked(root) });
+    toast(result.clientNotified ? `Moved to ${next} · client emailed` : `Moved to ${next}`);
+    await refreshExpandedOrder(id);
+  });
+
+  q("#detail-ship")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const result = await quickOrderPatch(id, { status: "Shipped", notifyClient: notifyClientChecked(root) });
+    toast(result.clientNotified ? "Marked as shipped · client emailed" : "Marked as shipped");
+    await refreshExpandedOrder(id);
+  });
+
+  q("#detail-pickup")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const result = await quickOrderPatch(id, { status: "Delivered", notifyClient: notifyClientChecked(root) });
+    toast(result.clientNotified ? "Marked as picked up · client emailed" : "Marked as picked up");
+    await refreshExpandedOrder(id);
+  });
+
+  q("#detail-mark-paid")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await quickOrderPatch(id, { paymentStatus: "Paid" });
+    toast("Marked as paid");
+    await refreshExpandedOrder(id);
+  });
+
+  q("#detail-edit")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openOrderModal(id);
+  });
+
+  q("#detail-share")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      const { url } = await api(`/api/orders/${id}/share-link`, { method: "POST", body: JSON.stringify({}) });
+      await navigator.clipboard.writeText(url);
+      toast("Client link copied");
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  q("#detail-rotate-link")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!(await confirmAction("New tracking link", "Generate a new link? The old link will stop working."))) return;
+    try {
+      const { url } = await api(`/api/orders/${id}/share-link`, {
+        method: "POST",
+        body: JSON.stringify({ rotate: true }),
+      });
+      await navigator.clipboard.writeText(url);
+      toast("New client link copied");
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  q("#detail-add-note")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const text = q("#detail-note-input")?.value.trim();
+    if (!text) return;
+    await api(`/api/orders/${id}/activity`, { method: "POST", body: JSON.stringify({ message: text }) });
+    toast("Note added");
+    await refreshExpandedOrder(id);
+  });
+}
+
+async function expandOrder(id, { scroll = true } = {}) {
+  if (state.expandedOrderId === id) {
+    state.expandedOrderId = "";
+    renderOrders();
+    return;
+  }
+  state.expandedOrderId = id;
+  if (!state.orderActivityCache[id]) {
+    try {
+      state.orderActivityCache[id] = await api(`/api/orders/${id}/activity`);
+    } catch {
+      state.orderActivityCache[id] = [];
+    }
+  }
+  renderOrders();
+  wireOrderDetailPanel(id);
+  if (scroll) {
+    requestAnimationFrame(() => {
+      $(`.order-detail-panel[data-order-id="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+}
+
+async function showOrderInList(id) {
+  state.expandedOrderId = id;
+  if (!state.orderActivityCache[id]) {
+    try {
+      state.orderActivityCache[id] = await api(`/api/orders/${id}/activity`);
+    } catch {
+      state.orderActivityCache[id] = [];
+    }
+  }
+  if (state.view !== "orders") setView("orders");
+  else renderOrders();
+  wireOrderDetailPanel(id);
+  requestAnimationFrame(() => {
+    $(`.order-detail-panel[data-order-id="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+}
+
 function wireKanbanDrag() {
   let draggedId = null;
-  $$(".card[data-order-id]").forEach((card) => {
+  $$(".card[data-order-id]:not(.card--open)").forEach((card) => {
     card.draggable = true;
     card.addEventListener("dragstart", (e) => {
       draggedId = card.dataset.orderId;
@@ -455,6 +719,7 @@ function wireKanbanDrag() {
           status,
           notifyClient: state.settings?.notifyClientOnStatus !== false,
         });
+        if (state.expandedOrderId === draggedId) await refreshExpandedOrder(draggedId);
         toast(`Moved to ${status}`);
       } catch (err) {
         toast(err.message);
@@ -763,7 +1028,7 @@ function renderDashboard() {
 
   $$("#view-dashboard [data-order-id]").forEach((el) => {
     el.style.cursor = "pointer";
-    el.onclick = () => openOrderDetail(el.dataset.orderId);
+    el.onclick = () => showOrderInList(el.dataset.orderId);
   });
   $$("#view-dashboard [data-client-id]").forEach((el) => {
     el.style.cursor = "pointer";
@@ -890,14 +1155,7 @@ function renderOrders() {
     .map((status) => {
       const cards = orders
         .filter((o) => o.status === status)
-        .map(
-          (o) => `<div class="card" data-order-id="${o.id}" draggable="true">
-            <div class="card__title">${escapeHtml(o.orderId)}</div>
-            <div class="card__meta">${escapeHtml(o.clientName)} · ${money(o.totalCost)}</div>
-            ${o.fulfillmentType === "Pickup" ? `<div class="card__meta"><span class="tag">Pickup</span></div>` : ""}
-            ${o.daysOverdue ? `<div class="card__meta"><span class="badge badge--overdue">${o.daysOverdue}d overdue</span></div>` : ""}
-          </div>`
-        )
+        .map((o) => renderOrderCard(o))
         .join("");
       return `<div class="kanban__col" data-kanban-status="${escapeHtml(status)}"><h3 class="kanban__title">${escapeHtml(status)}</h3>${cards || `<div class="empty" style="padding:0.5rem;">None</div>`}</div>`;
     })
@@ -940,25 +1198,7 @@ function renderOrders() {
           <tbody>
             ${
               orders.length
-                ? orders
-                    .map(
-                      (o) => `<tr>
-                        <td><strong>${escapeHtml(o.orderId)}</strong><div style="color:var(--muted);font-size:0.82rem;">${escapeHtml(o.items || "")}</div>${tagBadges(o.tags)}</td>
-                        <td>${escapeHtml(o.clientName)}</td>
-                        <td>${formatDate(o.dateReceived)}</td>
-                        <td>${formatDate(o.dueDate)}${o.daysOverdue ? `<div><span class="badge badge--overdue">${o.daysOverdue}d late</span></div>` : ""}</td>
-                        <td>${statusBadge(o.status)}</td>
-                        <td>${escapeHtml(o.paymentStatus)}</td>
-                        <td class="money">${money(o.totalCost)}</td>
-                        <td class="row-actions">
-                          <button type="button" class="btn" data-view-order="${o.id}">View</button>
-                          <button type="button" class="btn" data-copy-order="${o.id}" title="Copy client link">Link</button>
-                          <button type="button" class="btn" data-edit-order="${o.id}">Edit</button>
-                          <button type="button" class="btn btn--danger" data-delete-order="${o.id}">Delete</button>
-                        </td>
-                      </tr>`
-                    )
-                    .join("")
+                ? orders.map((o) => renderOrderTableRows(o)).join("")
                 : `<tr><td colspan="8" class="empty">No orders match your filters.</td></tr>`
             }
           </tbody>
@@ -1006,13 +1246,19 @@ function renderOrders() {
     };
   });
   wireKanbanDrag();
+  if (state.expandedOrderId) wireOrderDetailPanel(state.expandedOrderId);
 }
 
 function handleOrdersViewClick(e) {
-  const viewBtn = e.target.closest("[data-view-order]");
-  if (viewBtn) {
+  if (e.target.closest(".order-detail-panel")) return;
+
+  const collapseBtn = e.target.closest("[data-collapse-order]");
+  if (collapseBtn) return;
+
+  const toggleBtn = e.target.closest("[data-toggle-order]");
+  if (toggleBtn) {
     e.preventDefault();
-    openOrderDetail(viewBtn.dataset.viewOrder);
+    expandOrder(toggleBtn.dataset.toggleOrder);
     return;
   }
   const editBtn = e.target.closest("[data-edit-order]");
@@ -1032,15 +1278,18 @@ function handleOrdersViewClick(e) {
     e.preventDefault();
     (async () => {
       if (!(await confirmAction("Delete order", "Delete this order permanently?"))) return;
-      await api(`/api/orders/${deleteBtn.dataset.deleteOrder}`, { method: "DELETE" });
+      const deletedId = deleteBtn.dataset.deleteOrder;
+      if (state.expandedOrderId === deletedId) state.expandedOrderId = "";
+      await api(`/api/orders/${deletedId}`, { method: "DELETE" });
       toast("Order deleted");
       await refresh();
     })().catch((err) => toast(err.message));
     return;
   }
   const card = e.target.closest(".card[data-order-id]");
-  if (card) {
-    openOrderDetail(card.dataset.orderId);
+  if (card && !e.target.closest("button, input, a, label")) {
+    e.preventDefault();
+    expandOrder(card.dataset.orderId);
   }
 }
 
@@ -1262,160 +1511,6 @@ function openModal(title, bodyHtml, onSave, options = {}) {
   dialog.showModal();
 }
 
-async function openOrderDetail(id) {
-  try {
-    const order = state.orders.find((o) => o.id === id) || (await api(`/api/orders/${id}`));
-    let activity = [];
-    try {
-      activity = await api(`/api/orders/${id}/activity`);
-    } catch {
-      activity = [];
-    }
-  const flow = state.meta.orderStatuses;
-  const next = flow[flow.indexOf(order.status) + 1];
-  const atReady = order.status === "Ready";
-  const isPickup = order.fulfillmentType === "Pickup";
-  const canNotify = state.meta?.smtpConfigured && state.settings?.notifyClientOnStatus !== false;
-  const notifyRow =
-    canNotify && ["Ready", "In Progress", "New", "Shipped"].includes(order.status)
-      ? `<label class="notify-toggle"><input type="checkbox" id="detail-notify-client" checked /> Email client on status change</label>`
-      : "";
-  const advanceBtn =
-    next && !atReady
-      ? `<button type="button" class="btn btn--primary" id="detail-advance">Advance to ${escapeHtml(next)}</button>`
-      : "";
-  const readyActions = atReady
-    ? isPickup
-      ? `<button type="button" class="btn btn--primary" id="detail-pickup">Mark picked up</button>
-         <button type="button" class="btn" id="detail-ship">Mark shipped anyway</button>`
-      : `<button type="button" class="btn btn--primary" id="detail-ship">Mark shipped</button>
-         <button type="button" class="btn" id="detail-pickup">Mark picked up</button>`
-    : "";
-  const timeline =
-    activity.length > 0
-      ? activity
-          .map(
-            (a) => `<li class="timeline__item">
-              <span class="timeline__icon" aria-hidden="true">${activityIcon(a.type)}</span>
-              <div>
-                <div class="timeline__title">${escapeHtml(a.message)}</div>
-                <div class="timeline__meta">${formatDateTime(a.createdAt)}</div>
-              </div>
-            </li>`
-          )
-          .join("")
-      : `<li class="timeline__item timeline__item--empty">No activity yet.</li>`;
-
-  const body = `
-    <div class="detail-grid">
-      <div><span class="detail-label">Client</span><strong>${escapeHtml(order.clientName)}</strong></div>
-      <div><span class="detail-label">Status</span>${statusBadge(order.status)}</div>
-      <div><span class="detail-label">Payment</span>${paymentBadge(order.paymentStatus)}</div>
-      <div><span class="detail-label">Total</span><strong class="money">${money(order.totalCost)}</strong></div>
-      <div><span class="detail-label">Received</span>${formatDate(order.dateReceived)}</div>
-      <div><span class="detail-label">Due</span>${formatDate(order.dueDate)}${order.daysOverdue ? ` <span class="badge badge--overdue">${order.daysOverdue}d late</span>` : ""}</div>
-      <div><span class="detail-label">Fulfillment</span><strong>${escapeHtml(order.fulfillmentType || "Ship")}</strong></div>
-      ${order.invoiceNumber ? `<div><span class="detail-label">Invoice #</span>${escapeHtml(order.invoiceNumber)}</div>` : ""}
-      ${order.poNumber ? `<div><span class="detail-label">PO #</span>${escapeHtml(order.poNumber)}</div>` : ""}
-    </div>
-    ${order.tags?.length ? `<div class="detail-block"><span class="detail-label">Tags</span><div>${tagBadges(order.tags)}</div></div>` : ""}
-    ${order.items ? `<div class="detail-block"><span class="detail-label">Items</span><p>${escapeHtml(order.items)}</p></div>` : ""}
-    ${order.notes ? `<div class="detail-block"><span class="detail-label">Notes</span><p>${escapeHtml(order.notes)}</p></div>` : ""}
-    ${notifyRow}
-    <div class="detail-actions">
-      ${advanceBtn}
-      ${readyActions}
-      ${order.paymentStatus !== "Paid" ? `<button type="button" class="btn" id="detail-mark-paid">Mark paid</button>` : ""}
-      <button type="button" class="btn" id="detail-share">Copy client link</button>
-      <button type="button" class="btn btn--ghost" id="detail-rotate-link" title="Invalidate old links">New link</button>
-      <button type="button" class="btn" id="detail-edit">Edit order</button>
-    </div>
-    <div class="detail-block">
-      <span class="detail-label">Activity</span>
-      <ul class="timeline timeline--compact">${timeline}</ul>
-    </div>
-    <div class="detail-note">
-      <label for="detail-note-input">Add note</label>
-      <div class="detail-note__row">
-        <input id="detail-note-input" type="text" placeholder="Call client, shipped via UPS…" />
-        <button type="button" class="btn btn--primary" id="detail-add-note">Add</button>
-      </div>
-    </div>
-  `;
-
-  openModal(order.orderId, body, null, { wide: true, hideSave: true });
-  $("#modal-cancel").textContent = "Close";
-
-  if (next && !atReady) {
-    $("#detail-advance").onclick = async () => {
-      const result = await quickOrderPatch(id, { advanceStatus: true, notifyClient: notifyClientChecked() });
-      toast(result.clientNotified ? `Moved to ${next} · client emailed` : `Moved to ${next}`);
-      $("#modal").close();
-      openOrderDetail(id);
-    };
-  }
-  if (atReady) {
-    $("#detail-ship").onclick = async () => {
-      const result = await quickOrderPatch(id, { status: "Shipped", notifyClient: notifyClientChecked() });
-      toast(result.clientNotified ? "Marked as shipped · client emailed" : "Marked as shipped");
-      $("#modal").close();
-      openOrderDetail(id);
-    };
-    $("#detail-pickup").onclick = async () => {
-      const result = await quickOrderPatch(id, { status: "Delivered", notifyClient: notifyClientChecked() });
-      toast(result.clientNotified ? "Marked as picked up · client emailed" : "Marked as picked up");
-      $("#modal").close();
-      openOrderDetail(id);
-    };
-  }
-  if (order.paymentStatus !== "Paid") {
-    $("#detail-mark-paid").onclick = async () => {
-      await quickOrderPatch(id, { paymentStatus: "Paid" });
-      toast("Marked as paid");
-      $("#modal").close();
-      openOrderDetail(id);
-    };
-  }
-  $("#detail-edit").onclick = () => {
-    $("#modal").close();
-    openOrderModal(id);
-  };
-  $("#detail-share").onclick = async () => {
-    try {
-      const { url } = await api(`/api/orders/${id}/share-link`, { method: "POST", body: JSON.stringify({}) });
-      await navigator.clipboard.writeText(url);
-      toast("Client link copied");
-    } catch (err) {
-      toast(err.message);
-    }
-  };
-  $("#detail-rotate-link").onclick = async () => {
-    if (!(await confirmAction("New tracking link", "Generate a new link? The old link will stop working."))) return;
-    try {
-      const { url } = await api(`/api/orders/${id}/share-link`, {
-        method: "POST",
-        body: JSON.stringify({ rotate: true }),
-      });
-      await navigator.clipboard.writeText(url);
-      toast("New client link copied");
-    } catch (err) {
-      toast(err.message);
-    }
-  };
-  $("#detail-add-note").onclick = async () => {
-    const text = $("#detail-note-input").value.trim();
-    if (!text) return;
-    await api(`/api/orders/${id}/activity`, { method: "POST", body: JSON.stringify({ message: text }) });
-    toast("Note added");
-    $("#modal").close();
-    await refresh();
-    openOrderDetail(id);
-  };
-  } catch (err) {
-    toast(err.message);
-  }
-}
-
 async function quickOrderPatch(orderId, payload) {
   const data = await api(`/api/orders/${orderId}/quick`, { method: "PATCH", body: JSON.stringify(payload) });
   await refresh();
@@ -1477,7 +1572,7 @@ async function openClientDetail(id) {
     row.style.cursor = "pointer";
     row.onclick = () => {
       $("#modal").close();
-      openOrderDetail(row.dataset.orderId);
+      showOrderInList(row.dataset.orderId);
     };
   });
 }
@@ -1721,6 +1816,7 @@ function today() {
 async function refresh() {
   await loadAll();
   renderCurrentView();
+  if (state.view === "orders" && state.expandedOrderId) wireOrderDetailPanel(state.expandedOrderId);
 }
 
 function wireGlobalSearch() {
@@ -1777,7 +1873,7 @@ function wireGlobalSearch() {
           btn.onclick = () => {
             hideResults();
             input.value = "";
-            openOrderDetail(btn.dataset.openOrder);
+            showOrderInList(btn.dataset.openOrder);
           };
         });
       } catch {
