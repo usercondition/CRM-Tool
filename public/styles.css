@@ -1291,12 +1291,6 @@ tr:hover td {
   font-variant-numeric: tabular-nums;
 }
 
-.field-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
-}
-
 /* ——— Layout system ——— */
 .kpi-row {
   display: grid;
